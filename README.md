@@ -1,24 +1,41 @@
 # Hevy Coach
 
-A private training-intelligence companion for Hevy. It keeps Hevy as the workout logger and adds progress analysis, time-boxed workout planning, and evidence-first coaching.
+A private training-intelligence workspace for Hevy. Hevy remains the workout logger; this app adds progression analysis, weekly coaching reviews, athlete context, persistent conversations, and tailored program drafts.
 
-## Run locally
+## Product capabilities
 
-1. Copy `.env.example` to `.env.local`.
-2. Add your Hevy Pro API key as `HEVY_API_KEY`.
-3. Run `npm install` and `npm run dev`.
+- Reads up to 120 recent workouts and available exercise templates from Hevy.
+- Tracks training frequency, load-volume, direct muscle-group sets, estimated 1RM trends, recent estimated PRs, and exercise-level progression.
+- Generates an automatic weekly review with wins, watch items, and next steps.
+- Saves athlete profile details used to personalize recommendations.
+- Saves coaching chats and generated programs in a private D1 database.
+- Supports kilograms and pounds throughout the interface.
+- Uses OpenRouter for generative coaching when configured, with a deterministic evidence engine as a fallback.
 
-The app shows a clearly marked sample workspace until a key is configured.
+## Environment
 
-## Security
+Copy `.env.example` to `.env.local` and configure:
 
-Real secrets belong in `.env.local` or the hosting provider's encrypted environment settings. Never commit the API key or place it in browser code.
+```text
+HEVY_API_KEY=
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=openrouter/auto
+```
 
-## Current scope
+Secrets are read only by server routes. Never commit `.env.local` or place keys in browser code.
 
-- Reads up to 120 recent workouts and the available exercise templates.
-- Calculates progress, training distribution, workout frequency, and session duration.
-- Builds time-boxed workout drafts from exercise history.
-- Provides deterministic, evidence-first coaching summaries.
+## Local development
 
-Routine write-back and a generative coach are intentionally deferred until the read-only connection has been validated against real data.
+```bash
+npm install
+npm run db:generate
+npm run build
+./node_modules/.bin/wrangler d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_charming_sheva_callister.sql
+npm start
+```
+
+The generated migration is applied automatically by Sites during production publishing. Run each migration only once per local database.
+
+## Safety boundaries
+
+Estimated 1RM is treated as a trend signal, not a tested maximum. Coaching guidance is informational and does not diagnose injury or medical conditions. Programs remain drafts, and nothing is written back to Hevy without explicit approval.
