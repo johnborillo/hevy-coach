@@ -9,6 +9,28 @@ export type ExerciseOption = {
   note: string;
 };
 
+export type WorkoutSetLog = {
+  type: string;
+  weightKg: number | null;
+  reps: number | null;
+  rpe: number | null;
+};
+
+export type CalendarWorkout = {
+  id: string;
+  title: string;
+  date: string;
+  time: string;
+  durationMinutes: number;
+  workingSets: number;
+  volumeKg: number;
+  exercises: Array<{
+    title: string;
+    muscle: string;
+    sets: WorkoutSetLog[];
+  }>;
+};
+
 export type DashboardData = {
   connected: boolean;
   sourceLabel: string;
@@ -47,6 +69,7 @@ export type DashboardData = {
     workingSets: number;
     volumeKg: number;
   }>;
+  calendarWorkouts: CalendarWorkout[];
   exerciseOptions: ExerciseOption[];
   weeklyReview: { label: string; wins: string[]; watch: string[]; nextSteps: string[] };
   insights: { plateau: string; return: string; progress: string };
@@ -74,6 +97,13 @@ function daysAgo(iso: string) {
 
 function formatShortDate(iso: string) {
   return new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric' }).format(new Date(iso));
+}
+
+function formatTime(iso: string) {
+  return new Intl.DateTimeFormat('en-CA', {
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(iso));
 }
 
 function durationMinutes(workout: HevyWorkout) {
@@ -282,6 +312,25 @@ function analyze(workouts: HevyWorkout[], templates: ExerciseTemplate[], athlete
     records,
     exerciseStats,
     recentWorkouts: sorted.slice(0, 8).map((workout) => ({ title: workout.title, date: formatShortDate(workout.start_time), duration: `${Math.round(durationMinutes(workout))} min`, exercises: workout.exercises.length, workingSets: workout.exercises.flatMap((exercise) => exercise.sets).filter(isWorkingSet).length, volumeKg: Math.round(workoutVolume(workout)) })),
+    calendarWorkouts: sorted.map((workout) => ({
+      id: workout.id,
+      title: workout.title,
+      date: workout.start_time.slice(0, 10),
+      time: formatTime(workout.start_time),
+      durationMinutes: Math.round(durationMinutes(workout)),
+      workingSets: workout.exercises.flatMap((exercise) => exercise.sets).filter(isWorkingSet).length,
+      volumeKg: Math.round(workoutVolume(workout)),
+      exercises: workout.exercises.map((exercise) => ({
+        title: exercise.title,
+        muscle: titleCase(templateMap.get(exercise.exercise_template_id)?.primary_muscle_group ?? 'other'),
+        sets: exercise.sets.map((set) => ({
+          type: set.type ?? 'normal',
+          weightKg: set.weight_kg ?? null,
+          reps: set.reps ?? null,
+          rpe: set.rpe ?? null,
+        })),
+      })),
+    })),
     exerciseOptions,
     weeklyReview,
     insights: {
@@ -297,6 +346,17 @@ function demoData(message = 'Add HEVY_API_KEY to switch from sample data'): Dash
   const exerciseOptions: ExerciseOption[] = [
     ['Incline Bench Press', 'Chest', 3, 8, 65], ['Chest Supported Row', 'Upper Back', 3, 10, 55], ['Cable Lateral Raise', 'Shoulders', 3, 12, 9], ['Lat Pulldown', 'Lats', 3, 9, 59], ['Cable Triceps Extension', 'Triceps', 2, 12, 27], ['Incline Dumbbell Curl', 'Biceps', 2, 10, 12],
   ].map(([name, muscle, sets, reps, weightKg]) => ({ name: String(name), muscle: String(muscle), sets: Number(sets), reps: Number(reps), weightKg: Number(weightKg), note: 'Match the last clean effort; add a rep before load.' }));
+  const sampleExercises = [
+    { title: 'Bench Press (Barbell)', muscle: 'Chest', sets: [{ type: 'warmup', weightKg: 40, reps: 10, rpe: null }, { type: 'normal', weightKg: 80, reps: 6, rpe: 8 }, { type: 'normal', weightKg: 80, reps: 6, rpe: 8.5 }, { type: 'normal', weightKg: 77.5, reps: 7, rpe: 9 }] },
+    { title: 'Chest Supported Row', muscle: 'Upper Back', sets: [{ type: 'normal', weightKg: 55, reps: 10, rpe: 8 }, { type: 'normal', weightKg: 55, reps: 10, rpe: 8 }, { type: 'normal', weightKg: 55, reps: 9, rpe: 9 }] },
+    { title: 'Cable Lateral Raise', muscle: 'Shoulders', sets: [{ type: 'normal', weightKg: 9, reps: 13, rpe: 8 }, { type: 'normal', weightKg: 9, reps: 12, rpe: 9 }] },
+  ];
+  const calendarWorkouts: CalendarWorkout[] = [
+    { id: 'sample-upper-a', title: 'Upper A', date: '2026-09-08', time: '6:10 PM', durationMinutes: 54, workingSets: 8, volumeKg: 7420, exercises: sampleExercises },
+    { id: 'sample-lower-b', title: 'Lower B', date: '2026-09-06', time: '11:20 AM', durationMinutes: 62, workingSets: 7, volumeKg: 9860, exercises: [{ title: 'Squat (Barbell)', muscle: 'Quadriceps', sets: [{ type: 'warmup', weightKg: 70, reps: 6, rpe: null }, { type: 'normal', weightKg: 118, reps: 5, rpe: 8 }, { type: 'normal', weightKg: 118, reps: 5, rpe: 8.5 }, { type: 'normal', weightKg: 115, reps: 6, rpe: 9 }] }, { title: 'Romanian Deadlift', muscle: 'Hamstrings', sets: [{ type: 'normal', weightKg: 100, reps: 8, rpe: 8 }, { type: 'normal', weightKg: 100, reps: 8, rpe: 8.5 }, { type: 'normal', weightKg: 100, reps: 7, rpe: 9 }] }] },
+    { id: 'sample-pull', title: 'Pull', date: '2026-09-04', time: '5:45 PM', durationMinutes: 48, workingSets: 8, volumeKg: 6250, exercises: sampleExercises.slice(1) },
+    { id: 'sample-upper-b', title: 'Upper B', date: '2026-09-01', time: '6:05 PM', durationMinutes: 58, workingSets: 8, volumeKg: 8110, exercises: sampleExercises },
+  ];
   return {
     connected: false, sourceLabel: 'Sample workspace', syncMessage: message, athleteName: 'Athlete', lastWorkout: 'Upper A · Sep 8',
     stats: { sessions30d: 14, workingSets7d: 46, hours30d: 13.8, activeWeeks: 7, totalVolume30dKg: 88240, avgSessionMinutes: 59, consistencyPercent: 88, volumeChangePercent: 8.4 },
@@ -311,6 +371,7 @@ function demoData(message = 'Add HEVY_API_KEY to switch from sample data'): Dash
     records: [{ exercise: 'Bench Press (Barbell)', date: 'Sep 8', valueKg: 96.1, reps: 6, weightKg: 80 }, { exercise: 'Squat (Barbell)', date: 'Sep 6', valueKg: 138.4, reps: 5, weightKg: 118 }],
     exerciseStats: [{ exercise: 'Bench Press (Barbell)', muscle: 'Chest', sessions: 14, workingSets: 48, volumeKg: 28200, bestE1rmKg: 96.1, change: 4.8 }, { exercise: 'Squat (Barbell)', muscle: 'Quadriceps', sessions: 11, workingSets: 42, volumeKg: 39800, bestE1rmKg: 138.4, change: 3.2 }, { exercise: 'Lat Pulldown', muscle: 'Lats', sessions: 10, workingSets: 36, volumeKg: 18400, bestE1rmKg: 74.2, change: 1.7 }, { exercise: 'Romanian Deadlift', muscle: 'Hamstrings', sessions: 9, workingSets: 31, volumeKg: 27600, bestE1rmKg: 121.5, change: -0.8 }],
     recentWorkouts: [{ title: 'Upper A', date: 'Sep 8', duration: '54 min', exercises: 6, workingSets: 18, volumeKg: 7420 }, { title: 'Lower B', date: 'Sep 6', duration: '62 min', exercises: 7, workingSets: 20, volumeKg: 9860 }, { title: 'Pull', date: 'Sep 4', duration: '48 min', exercises: 6, workingSets: 17, volumeKg: 6250 }, { title: 'Upper B', date: 'Sep 1', duration: '58 min', exercises: 7, workingSets: 21, volumeKg: 8110 }],
+    calendarWorkouts,
     exerciseOptions,
     weeklyReview: { label: 'Sep 7–Sep 13', wins: ['Four sessions completed with 46 direct working sets.', 'Two estimated strength PRs appeared in the last 30 days.', 'Load-volume is up 8.4% week over week.'], watch: ['Shoulder volume fell slightly versus last week.', 'Lower-body sessions are running longer than average.'], nextSteps: ['Keep bench load stable and earn one clean rep.', 'Place the lower-body compound first next session.'] },
     insights: { plateau: 'Bench press is up 4.8% across six comparable sessions; hold load and look for one more clean rep.', return: 'After a three-week break, reduce set count, keep several reps in reserve, and rebuild gradually.', progress: 'Bench press is the clearest upward signal. Lateral raise is the next simple rep-progression opportunity.' },

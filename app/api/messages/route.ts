@@ -50,9 +50,13 @@ export async function POST(request: Request) {
         content: fallbackAnswer(content, dashboard),
         model: 'evidence-engine',
       };
-    } catch {
+    } catch (error) {
+      console.error('Coach AI failed after retrying', {
+        name: error instanceof Error ? error.name : 'unknown',
+        message: error instanceof Error ? error.message : 'unknown',
+      });
       answer = {
-        content: `${fallbackAnswer(content, dashboard)}\n\nThe AI provider is temporarily unavailable, so this answer used the local evidence engine.`,
+        content: `${fallbackAnswer(content, dashboard)}\n\n*DeepSeek did not respond after retrying, so this reply uses only the training signals calculated from your Hevy history.*`,
         model: 'evidence-engine',
       };
     }

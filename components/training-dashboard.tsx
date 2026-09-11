@@ -15,6 +15,7 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  ClipboardList,
   Clock3,
   Dumbbell,
   Flame,
@@ -44,6 +45,8 @@ import {
 } from 'recharts';
 
 import { Button } from '@/components/ui/button';
+import { CoachMessage } from '@/components/coach-message';
+import { WorkoutCalendar } from '@/components/workout-calendar';
 import {
   Select,
   SelectContent,
@@ -59,14 +62,15 @@ import type {
   TrainingProgram,
 } from '@/lib/storage';
 
-type View = 'today' | 'progress' | 'coach' | 'program' | 'profile';
+type View = 'today' | 'progress' | 'history' | 'coach' | 'program' | 'profile';
 type Unit = 'kg' | 'lb';
 
 const NAV_ITEMS = [
   { id: 'today' as const, label: 'Today', icon: Activity },
   { id: 'progress' as const, label: 'Progress', icon: BarChart3 },
+  { id: 'history' as const, label: 'History', icon: CalendarDays },
   { id: 'coach' as const, label: 'Coach', icon: MessageSquareText },
-  { id: 'program' as const, label: 'Program', icon: CalendarDays },
+  { id: 'program' as const, label: 'Program', icon: ClipboardList },
   { id: 'profile' as const, label: 'Athlete', icon: Settings2 },
 ];
 
@@ -179,6 +183,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
   const [chatError, setChatError] = useState('');
+  const [animatingMessageId, setAnimatingMessageId] = useState<string | null>(null);
   const [programs, setPrograms] = useState<TrainingProgram[]>([]);
   const [activeProgram, setActiveProgram] = useState<TrainingProgram | null>(
     null,
@@ -347,11 +352,13 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     setConversations((current) => [payload.conversation, ...current]);
     setActiveConversation(payload.conversation.id);
     setMessages([]);
+    setAnimatingMessageId(null);
   }
 
   async function openChat(id: string) {
     setActiveConversation(id);
     setChatError('');
+    setAnimatingMessageId(null);
     const response = await fetch(
       `/api/messages?conversationId=${encodeURIComponent(id)}`,
     );
@@ -373,6 +380,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     if (activeConversation === id) {
       setActiveConversation(null);
       setMessages([]);
+      setAnimatingMessageId(null);
     }
   }
 
@@ -424,11 +432,8 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
       >(response);
       if (!response.ok)
         throw new Error(payload.error || 'The coach could not answer.');
-      setMessages((current) => [
-        ...current.filter((message) => message.id !== optimistic.id),
-        payload.userMessage,
-        payload.assistantMessage,
-      ]);
+      setMessages((current) => [...current, payload.assistantMessage]);
+      setAnimatingMessageId(payload.assistantMessage.id);
       const refreshed = await fetch('/api/conversations').then((result) =>
         readJson<{ conversations: ConversationSummary[] }>(result),
       );
@@ -530,11 +535,13 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 ? `Ready, ${profile.displayName === 'Athlete' ? data.athleteName : profile.displayName}.`
                 : view === 'progress'
                   ? 'Read the adaptation.'
-                  : view === 'coach'
-                    ? 'Coach Rowan.'
-                    : view === 'program'
-                      ? 'Build the next block.'
-                      : 'Athlete context.'}
+                  : view === 'history'
+                    ? 'Your training log.'
+                    : view === 'coach'
+                      ? 'Coach Rowan.'
+                      : view === 'program'
+                        ? 'Build the next block.'
+                        : 'Athlete context.'}
             </h1>
           </div>
           <div className="topbar-actions">
@@ -1009,6 +1016,10 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
           </>
         )}
 
+        {view === 'history' && (
+          <WorkoutCalendar workouts={data.calendarWorkouts} unit={unit} />
+        )}
+
         {view === 'coach' && (
           <section className="chat-workspace">
             <aside className="chat-sidebar">
@@ -1079,7 +1090,15 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                           </strong>
                           {message.model && <span>{message.model}</span>}
                         </div>
-                        <p>{message.content}</p>
+                        {message.role === 'assistant' ? (
+                          <CoachMessage
+                            content={message.content}
+                            animate={message.id === animatingMessageId}
+                            onComplete={() => setAnimatingMessageId((current) => current === message.id ? null : current)}
+                          />
+                        ) : (
+                          <p>{message.content}</p>
+                        )}
                       </div>
                     </article>
                   ))
@@ -1112,7 +1131,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     <div>
                       <div className="message-meta">
                         <strong>Coach Rowan</strong>
-                        <span>reviewing your data</span>
+                        <span>reading your training history</span>
                       </div>
                       <div className="thinking">
                         <i />
