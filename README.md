@@ -19,7 +19,7 @@ Copy `.env.example` to `.env.local` and configure:
 ```text
 HEVY_API_KEY=
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=openrouter/auto
+OPENROUTER_MODEL=deepseek/deepseek-v4-flash-0731
 ```
 
 Secrets are read only by server routes. Never commit `.env.local` or place keys in browser code.

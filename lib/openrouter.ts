@@ -54,7 +54,8 @@ export async function askCoach(
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return null;
 
-  const model = process.env.OPENROUTER_MODEL || 'openrouter/auto';
+  const model =
+    process.env.OPENROUTER_MODEL || 'deepseek/deepseek-v4-flash-0731';
   const messages: OpenRouterMessage[] = [
     { role: 'system', content: COACH_PERSONA },
     {
@@ -114,7 +115,8 @@ export async function generateProgramWithCoach(
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return null;
 
-  const model = process.env.OPENROUTER_MODEL || 'openrouter/auto';
+  const model =
+    process.env.OPENROUTER_MODEL || 'deepseek/deepseek-v4-flash-0731';
   const response = await fetch(
     'https://openrouter.ai/api/v1/chat/completions',
     {
