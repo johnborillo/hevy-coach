@@ -22,7 +22,12 @@ function fallbackAnswer(question: string, dashboard: Awaited<ReturnType<typeof g
   const prompt = question.toLowerCase();
   if (prompt.includes('break') || prompt.includes('return') || prompt.includes('hiatus')) return dashboard.insights.return;
   if (prompt.includes('plateau') || prompt.includes('stuck')) return dashboard.insights.plateau;
-  if (prompt.includes('progress') || prompt.includes('next')) return dashboard.insights.progress;
+  if (prompt.includes('progress') || prompt.includes('next')) {
+    if (dashboard.trend.change === 0) {
+      return `Your verified Hevy history shows ${dashboard.stats.sessions30d} sessions in the last 30 days and ${dashboard.stats.workingSets7d} working sets in the last seven. ${dashboard.trend.exercise} is currently flat rather than clearly progressing, so treat it as a baseline: keep the load stable, improve repeatable reps or technique, and reassess after two or three comparable sessions.`;
+    }
+    return dashboard.insights.progress;
+  }
   if (prompt.includes('week') || prompt.includes('review')) {
     return `This week: ${dashboard.weeklyReview.wins.join(' ')} Watch: ${dashboard.weeklyReview.watch.join(' ')} Next: ${dashboard.weeklyReview.nextSteps.join(' ')}`;
   }

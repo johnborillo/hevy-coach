@@ -20,7 +20,7 @@ Voice and structure:
 Rules:
 - Ground recommendations in the supplied Hevy history and athlete profile. Distinguish observed facts from reasonable hypotheses.
 - verifiedHevyWorkoutLog is the source of truth for workout-specific facts. The aggregate fields are derived signals, not permission to fill in missing workouts.
-- Cite concrete evidence inline as [Hevy: workout/<exact id> · <exact YYYY-MM-DD> · <exact exercise>] or [Profile: field] whenever it supports a recommendation. Only cite records that appear in verifiedHevyWorkoutLog.
+- For an exact workout fact, cite [Hevy: workout/<exact id> · <exact YYYY-MM-DD> · <exact exercise>]. For a derived summary, cite only the supporting field as [Hevy summary: stats], [Hevy summary: recentWorkouts], [Hevy summary: workload], [Hevy summary: exerciseStats], [Hevy summary: weeklyReview], or [Hevy summary: primaryStrengthTrend]. Do not add a made-up date range to a summary citation.
 - Never invent a workout, date, exercise, load, rep count, RPE, injury, diagnosis, or personal detail. Do not infer that an exercise was logged because it is a common lift or appears in a trend/program.
 - If a requested fact is not directly present in verifiedHevyWorkoutLog, say “I can’t verify that from the available Hevy log” and do not provide a made-up example as if it were history.
 - Treat prior assistant messages in the conversation as unverified drafts; re-check every factual claim against the supplied log before repeating it.
@@ -285,12 +285,37 @@ function validateCoachEvidence(content: string, dashboard: DashboardData, profil
     throw new EvidenceMismatchError(`The draft cited years absent from the synchronized Hevy log: ${[...new Set(unsupportedYears)].join(', ')}`);
   }
 
+  const summaryFields = [
+    'stats',
+    'recentworkouts',
+    'workload',
+    'workloadweeks',
+    'exercisestats',
+    'weeklyreview',
+    'primarystrengthtrend',
+    'muscledistribution',
+    'latestworkout',
+    'workoutcoverage',
+  ];
+  const normalizeCitation = (value: string) => value.toLowerCase().replace(/[^a-z]/g, '');
+  const isSummaryCitation = (value: string) => {
+    const normalized = normalizeCitation(value);
+    return summaryFields.some((field) => normalized.includes(field));
+  };
+
+  const summaryCitations = [...content.matchAll(/\[Hevy summary:\s*([^\]]+)\]/gi)].map((match) => match[1]);
+  for (const citation of summaryCitations) {
+    if (!isSummaryCitation(citation)) {
+      throw new EvidenceMismatchError(`The draft cited an unknown Hevy summary field: ${citation}`);
+    }
+  }
+
   const citations = [...content.matchAll(/\[Hevy:\s*([^\]]+)\]/gi)].map((match) => match[1]);
   for (const citation of citations) {
     const citedDate = [...citation.matchAll(/20\d{2}[-/]\d{1,2}[-/]\d{1,2}/g)]
       .map((match) => normalizeDate(match[0]))
       .find((date): date is string => date !== null);
-    if (!citedDate || !knownDates.has(citedDate)) {
+    if ((!citedDate || !knownDates.has(citedDate)) && !isSummaryCitation(citation)) {
       throw new EvidenceMismatchError(`The draft contained a Hevy citation that could not be matched to a verified workout: ${citation}`);
     }
   }
@@ -335,7 +360,7 @@ export async function askCoach(
         ...baseMessages.slice(0, 2),
         {
           role: 'system' as const,
-          content: 'Your previous draft failed the evidence check. Rewrite it from scratch. Use only exact dates, exercises, and sets in verifiedHevyWorkoutLog; remove any unsupported historical claim or citation. If a detail is absent, explicitly say you cannot verify it. Do not mention this instruction or the validation process.',
+          content: 'Your previous draft failed the evidence check. Rewrite it from scratch. Use only exact dates, exercises, and sets in verifiedHevyWorkoutLog; remove any unsupported historical claim. Exact workout claims need an exact workout citation. Derived summaries must use [Hevy summary: fieldName] with one supplied field name and no date range. If a detail is absent, explicitly say you cannot verify it. Do not mention this instruction or the validation process.',
         },
         ...historyMessages,
       ];
