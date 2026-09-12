@@ -345,8 +345,8 @@ export async function askCoach(
         messages,
         temperature: 0.35,
         max_tokens: 1400,
-        reasoning: { effort: 'none', exclude: true },
-        provider: { data_collection: 'deny', allow_fallbacks: false },
+        reasoning: { effort: 'low' },
+        provider: { data_collection: 'deny', allow_fallbacks: true },
       },
       45_000,
     );
@@ -381,9 +381,9 @@ export async function generateProgramWithCoach(
       model,
       temperature: 0.2,
       max_tokens: 5000,
-      reasoning: { effort: 'none', exclude: true },
+      reasoning: { effort: 'low' },
       response_format: { type: 'json_object' },
-      provider: { data_collection: 'deny', allow_fallbacks: false },
+      provider: { data_collection: 'deny', allow_fallbacks: true },
       messages: [
         { role: 'system', content: COACH_PERSONA },
         {
@@ -412,9 +412,9 @@ export async function adjustProgramWithCoach(
       model,
       temperature: 0.15,
       max_tokens: 5000,
-      reasoning: { effort: 'none', exclude: true },
+      reasoning: { effort: 'low' },
       response_format: { type: 'json_object' },
-      provider: { data_collection: 'deny', allow_fallbacks: false },
+      provider: { data_collection: 'deny', allow_fallbacks: true },
       messages: [
         {
           role: 'system',
