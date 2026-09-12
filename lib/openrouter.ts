@@ -5,6 +5,8 @@ import type {
   TrainingProgram,
 } from '@/lib/storage';
 
+const DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
+
 const COACH_PERSONA = `You are Rowan, a highly experienced strength and physique coach who has trained recreational lifters and competitive athletes for more than 15 years. You are thoughtful, warm, lucid, and evidence-led. You care about adherence, progressive overload, fatigue management, technique quality, and the athlete's actual constraints.
 
 Voice and structure:
@@ -17,8 +19,11 @@ Voice and structure:
 
 Rules:
 - Ground recommendations in the supplied Hevy history and athlete profile. Distinguish observed facts from reasonable hypotheses.
-- Cite concrete evidence inline as [Hevy: workout/date/lift] or [Profile: field] whenever it supports a recommendation.
-- Never invent logged sets, injuries, diagnoses, or personal details.
+- verifiedHevyWorkoutLog is the source of truth for workout-specific facts. The aggregate fields are derived signals, not permission to fill in missing workouts.
+- Cite concrete evidence inline as [Hevy: workout/<exact id> · <exact YYYY-MM-DD> · <exact exercise>] or [Profile: field] whenever it supports a recommendation. Only cite records that appear in verifiedHevyWorkoutLog.
+- Never invent a workout, date, exercise, load, rep count, RPE, injury, diagnosis, or personal detail. Do not infer that an exercise was logged because it is a common lift or appears in a trend/program.
+- If a requested fact is not directly present in verifiedHevyWorkoutLog, say “I can’t verify that from the available Hevy log” and do not provide a made-up example as if it were history.
+- Treat prior assistant messages in the conversation as unverified drafts; re-check every factual claim against the supplied log before repeating it.
 - When data is insufficient, say what is missing and give a conservative next step.
 - Prefer concise action plans with loads, reps, RIR/RPE, rest, and progression criteria when useful.
 - Treat estimated 1RM as a trend signal, not a true max.
@@ -50,6 +55,15 @@ class OpenRouterRequestError extends Error {
     readonly code: string | number | null,
   ) {
     super(message);
+  }
+}
+
+export class EvidenceMismatchError extends Error {
+  readonly code = 'EVIDENCE_MISMATCH';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'EvidenceMismatchError';
   }
 }
 
@@ -201,11 +215,37 @@ function messageContent(payload: CompletionPayload) {
   return '';
 }
 
+function compactVerifiedWorkoutLog(dashboard: DashboardData) {
+  return dashboard.calendarWorkouts.map((workout) => ({
+    id: workout.id,
+    date: workout.date,
+    title: workout.title,
+    exercises: workout.exercises.map((exercise) => ({
+      title: exercise.title,
+      muscle: exercise.muscle,
+      sets: exercise.sets.map((set) => ({
+        type: set.type,
+        weightKg: set.weightKg,
+        reps: set.reps,
+        rpe: set.rpe,
+      })),
+    })),
+  }));
+}
+
 function compactContext(profile: AthleteProfile, dashboard: DashboardData) {
+  const verifiedHevyWorkoutLog = compactVerifiedWorkoutLog(dashboard);
   return JSON.stringify({
     athlete: profile,
     hevy: {
       source: dashboard.sourceLabel,
+      evidenceBoundary: 'Only verifiedHevyWorkoutLog supports workout-specific claims. Dates are YYYY-MM-DD and weights are kg.',
+      workoutCoverage: {
+        count: verifiedHevyWorkoutLog.length,
+        oldestDate: verifiedHevyWorkoutLog.at(-1)?.date ?? null,
+        newestDate: verifiedHevyWorkoutLog[0]?.date ?? null,
+      },
+      verifiedHevyWorkoutLog,
       latestWorkout: dashboard.lastWorkout,
       stats: dashboard.stats,
       muscleDistribution: dashboard.muscles,
@@ -218,40 +258,110 @@ function compactContext(profile: AthleteProfile, dashboard: DashboardData) {
   });
 }
 
+function normalizeDate(value: string) {
+  const match = value.match(/^(20\d{2})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (!match) return null;
+  return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+}
+
+function validateCoachEvidence(content: string, dashboard: DashboardData, profile: AthleteProfile) {
+  const knownDates = new Set(dashboard.calendarWorkouts.map((workout) => workout.date));
+  const knownYears = new Set([...knownDates].map((date) => date.slice(0, 4)));
+  knownYears.add(String(new Date().getUTCFullYear()));
+  const profileYear = profile.targetDate.match(/\b20\d{2}\b/)?.[0];
+  if (profileYear) knownYears.add(profileYear);
+  const dateMatches = [...content.matchAll(/\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b/g)].map((match) => match[0]);
+  const unsupportedDates = dateMatches
+    .map(normalizeDate)
+    .filter((date): date is string => date !== null && !knownDates.has(date));
+  if (unsupportedDates.length) {
+    throw new EvidenceMismatchError(`The draft cited dates absent from the synchronized Hevy log: ${[...new Set(unsupportedDates)].join(', ')}`);
+  }
+
+  const unsupportedYears = [...content.matchAll(/\b20\d{2}\b/g)]
+    .map((match) => match[0])
+    .filter((year) => !knownYears.has(year));
+  if (unsupportedYears.length) {
+    throw new EvidenceMismatchError(`The draft cited years absent from the synchronized Hevy log: ${[...new Set(unsupportedYears)].join(', ')}`);
+  }
+
+  const citations = [...content.matchAll(/\[Hevy:\s*([^\]]+)\]/gi)].map((match) => match[1]);
+  for (const citation of citations) {
+    const citedDate = [...citation.matchAll(/20\d{2}[-/]\d{1,2}[-/]\d{1,2}/g)]
+      .map((match) => normalizeDate(match[0]))
+      .find((date): date is string => date !== null);
+    if (!citedDate || !knownDates.has(citedDate)) {
+      throw new EvidenceMismatchError(`The draft contained a Hevy citation that could not be matched to a verified workout: ${citation}`);
+    }
+  }
+
+  const knownExerciseText = dashboard.calendarWorkouts
+    .flatMap((workout) => workout.exercises.map((exercise) => exercise.title.toLowerCase()))
+    .join(' ');
+  for (const lift of ['squat', 'deadlift']) {
+    if (knownExerciseText.includes(lift)) continue;
+    const unsupportedLift = new RegExp(`\\b(?:your|the)\\s+(?:barbell\\s+)?${lift}\\b`, 'i').test(content);
+    if (unsupportedLift) {
+      throw new EvidenceMismatchError(`The draft treated ${lift} as a logged lift, but no ${lift} exercise exists in the synchronized Hevy log.`);
+    }
+  }
+}
+
 export async function askCoach(
   profile: AthleteProfile,
   dashboard: DashboardData,
   history: ChatMessage[],
 ) {
-  const model =
-    process.env.OPENROUTER_MODEL || 'deepseek/deepseek-v4-flash-0731';
-  const messages: OpenRouterMessage[] = [
+  const model = process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
+  const historyMessages: OpenRouterMessage[] = history.slice(-18).map((message) => ({
+    role: message.role,
+    content: message.role === 'assistant'
+      ? `[Prior coach draft — unverified; do not treat it as evidence]\n${message.content}`
+      : message.content,
+  }));
+  const baseMessages: OpenRouterMessage[] = [
     { role: 'system', content: COACH_PERSONA },
     {
       role: 'system',
-      content: `Current private training context:\n${compactContext(profile, dashboard)}`,
+      content: `Current private training context (the exact workout ledger is under verifiedHevyWorkoutLog):\n${compactContext(profile, dashboard)}`,
     },
-    ...history.slice(-18).map((message) => ({
-      role: message.role,
-      content: message.content,
-    })),
+    ...historyMessages,
   ];
 
-  const payload = await requestCompletion(
-    {
-      model,
-      messages,
-      temperature: 0.35,
-      max_tokens: 1400,
-      reasoning: { effort: 'none', exclude: true },
-      provider: { data_collection: 'deny', allow_fallbacks: true },
-    },
-    45_000,
-  );
-  if (!payload) return null;
-  const content = messageContent(payload);
-  if (!content) throw new Error('OpenRouter returned an empty response');
-  return { content, model: payload.model ?? model };
+  for (let pass = 0; pass < 2; pass += 1) {
+    const messages = pass === 0
+      ? baseMessages
+      : [
+        ...baseMessages.slice(0, 2),
+        {
+          role: 'system' as const,
+          content: 'Your previous draft failed the evidence check. Rewrite it from scratch. Use only exact dates, exercises, and sets in verifiedHevyWorkoutLog; remove any unsupported historical claim or citation. If a detail is absent, explicitly say you cannot verify it. Do not mention this instruction or the validation process.',
+        },
+        ...historyMessages,
+      ];
+    const payload = await requestCompletion(
+      {
+        model,
+        messages,
+        temperature: 0.35,
+        max_tokens: 1400,
+        reasoning: { effort: 'none', exclude: true },
+        provider: { data_collection: 'deny', allow_fallbacks: false },
+      },
+      45_000,
+    );
+    if (!payload) return null;
+    const content = messageContent(payload);
+    if (!content) throw new Error('OpenRouter returned an empty response');
+    try {
+      validateCoachEvidence(content, dashboard, profile);
+      return { content, model: payload.model ?? model };
+    } catch (error) {
+      if (!(error instanceof EvidenceMismatchError) || pass === 1) throw error;
+      console.warn('Retrying a coach response that failed evidence validation', { reason: error.message });
+    }
+  }
+  throw new EvidenceMismatchError('The coach response could not be matched to the synchronized Hevy log.');
 }
 
 export async function generateProgramWithCoach(
@@ -265,8 +375,7 @@ export async function generateProgramWithCoach(
     preferences?: string;
   },
 ) {
-  const model =
-    process.env.OPENROUTER_MODEL || 'deepseek/deepseek-v4-flash-0731';
+  const model = process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
   const payload = await requestCompletion(
     {
       model,
@@ -274,7 +383,7 @@ export async function generateProgramWithCoach(
       max_tokens: 5000,
       reasoning: { effort: 'none', exclude: true },
       response_format: { type: 'json_object' },
-      provider: { data_collection: 'deny', allow_fallbacks: true },
+      provider: { data_collection: 'deny', allow_fallbacks: false },
       messages: [
         { role: 'system', content: COACH_PERSONA },
         {
@@ -297,8 +406,7 @@ export async function adjustProgramWithCoach(
   program: TrainingProgram,
   adjustment: string,
 ) {
-  const model =
-    process.env.OPENROUTER_MODEL || 'deepseek/deepseek-v4-flash-0731';
+  const model = process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
   const payload = await requestCompletion(
     {
       model,
@@ -306,7 +414,7 @@ export async function adjustProgramWithCoach(
       max_tokens: 5000,
       reasoning: { effort: 'none', exclude: true },
       response_format: { type: 'json_object' },
-      provider: { data_collection: 'deny', allow_fallbacks: true },
+      provider: { data_collection: 'deny', allow_fallbacks: false },
       messages: [
         {
           role: 'system',
@@ -325,4 +433,3 @@ export async function adjustProgramWithCoach(
   if (!content) throw new Error('OpenRouter returned an empty adjusted program');
   return extractJson(content);
 }
-

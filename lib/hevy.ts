@@ -378,6 +378,43 @@ function demoData(message = 'Add HEVY_API_KEY to switch from sample data'): Dash
   };
 }
 
+function unavailableData(message: string): DashboardData {
+  const emptyWeeks = Array.from({ length: 8 }, (_, index) => ({
+    label: `Week ${index + 1}`,
+    sets: 0,
+    volumeKg: 0,
+    sessions: 0,
+  }));
+  return {
+    connected: false,
+    sourceLabel: 'Hevy unavailable',
+    syncMessage: message,
+    athleteName: 'Athlete',
+    lastWorkout: 'Unavailable — sync Hevy to load verified history',
+    stats: { sessions30d: 0, workingSets7d: 0, hours30d: 0, activeWeeks: 0, totalVolume30dKg: 0, avgSessionMinutes: 0, consistencyPercent: 0, volumeChangePercent: 0 },
+    muscles: [],
+    trend: { exercise: 'No verified lift data', change: 0, points: [] },
+    strengthTrends: [],
+    workloadWeeks: emptyWeeks,
+    records: [],
+    exerciseStats: [],
+    recentWorkouts: [],
+    calendarWorkouts: [],
+    exerciseOptions: [],
+    weeklyReview: {
+      label: 'No verified data',
+      wins: [],
+      watch: ['Hevy history is unavailable, so no workout-specific coaching is safe yet.'],
+      nextSteps: ['Retry the Hevy sync before asking for progress feedback.'],
+    },
+    insights: {
+      plateau: 'No verified Hevy data is available to assess a plateau.',
+      return: 'No verified Hevy data is available to assess a return plan.',
+      progress: 'No verified Hevy data is available to assess progress.',
+    },
+  };
+}
+
 export async function getDashboardData(): Promise<DashboardData> {
   const apiKey = process.env.HEVY_API_KEY;
   if (!apiKey) return demoData();
@@ -390,6 +427,6 @@ export async function getDashboardData(): Promise<DashboardData> {
     return analyze(workouts, templates, user.data?.name ?? user.name ?? 'Athlete');
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Unknown sync error';
-    return demoData(`Hevy connection needs attention: ${reason}`);
+    return unavailableData(`Hevy connection needs attention: ${reason}`);
   }
 }

@@ -1,5 +1,5 @@
 import { getDashboardData } from '@/lib/hevy';
-import { askCoach } from '@/lib/openrouter';
+import { askCoach, EvidenceMismatchError } from '@/lib/openrouter';
 import { requestUserId } from '@/lib/request-user';
 import { getProfile, listConversations, listMessages, saveMessage } from '@/lib/storage';
 
@@ -55,10 +55,14 @@ export async function POST(request: Request) {
         name: error instanceof Error ? error.name : 'unknown',
         message: error instanceof Error ? error.message : 'unknown',
       });
+      const evidenceMismatch = error instanceof EvidenceMismatchError;
       answer = {
-        content: `${fallbackAnswer(content, dashboard)}\n\n*DeepSeek did not respond after retrying, so this reply uses only the training signals calculated from your Hevy history.*`,
+        content: `${fallbackAnswer(content, dashboard)}\n\n*The AI draft was withheld because it referenced workout evidence that could not be matched to your synchronized Hevy log. This answer uses only the verified training signals above.*`,
         model: 'evidence-engine',
       };
+      if (!evidenceMismatch) {
+        answer.content = `${fallbackAnswer(content, dashboard)}\n\n*The AI provider was unavailable after retrying, so this answer uses only the verified training signals calculated from your Hevy history.*`;
+      }
     }
     const assistantMessage = await saveMessage(userId, conversationId, 'assistant', answer.content, answer.model);
     return Response.json({ userMessage, assistantMessage });
