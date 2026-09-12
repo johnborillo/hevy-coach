@@ -291,16 +291,51 @@ export async function listPrograms(userId: string) {
       created_at: string;
     }>();
 
-  return result.results.map((row) => ({
+  return result.results.map(rowToProgram);
+}
+
+type ProgramRow = {
+  id: string;
+  title: string;
+  goal: string;
+  duration_weeks: number;
+  days_per_week: number;
+  minutes_per_session: number;
+  content_json: string;
+  created_at: string;
+};
+
+function rowToProgram(row: ProgramRow) {
+  let content: Partial<TrainingProgram> = {};
+  try {
+    content = JSON.parse(row.content_json) as Partial<TrainingProgram>;
+  } catch {
+    content = {};
+  }
+  // Database columns are canonical. This prevents an older content_json blob
+  // from making two saved programs appear to share the same metadata.
+  return {
+    ...content,
     id: row.id,
     title: row.title,
     goal: row.goal,
     durationWeeks: row.duration_weeks,
     daysPerWeek: row.days_per_week,
     minutesPerSession: row.minutes_per_session,
-    ...JSON.parse(row.content_json),
     createdAt: row.created_at,
-  })) as TrainingProgram[];
+  } as TrainingProgram;
+}
+
+export async function getProgram(userId: string, id: string) {
+  const row = await getDatabase()
+    .prepare(
+      `SELECT id, title, goal, duration_weeks, days_per_week,
+        minutes_per_session, content_json, created_at
+       FROM programs WHERE id = ? AND user_id = ? LIMIT 1`,
+    )
+    .bind(id, userId)
+    .first<ProgramRow>();
+  return row ? rowToProgram(row) : null;
 }
 
 export async function saveProgram(userId: string, program: Omit<TrainingProgram, 'id' | 'createdAt'>) {
@@ -327,3 +362,40 @@ export async function saveProgram(userId: string, program: Omit<TrainingProgram,
     .run();
   return { id, title, goal, durationWeeks, daysPerWeek, minutesPerSession, ...content, createdAt };
 }
+
+export async function updateProgram(
+  userId: string,
+  id: string,
+  program: Omit<TrainingProgram, 'id' | 'createdAt'>,
+) {
+  const { title, goal, durationWeeks, daysPerWeek, minutesPerSession, ...content } = program;
+  const result = await getDatabase()
+    .prepare(
+      `UPDATE programs SET title = ?, goal = ?, duration_weeks = ?,
+        days_per_week = ?, minutes_per_session = ?, content_json = ?
+       WHERE id = ? AND user_id = ?`,
+    )
+    .bind(
+      title,
+      goal,
+      durationWeeks,
+      daysPerWeek,
+      minutesPerSession,
+      JSON.stringify(content),
+      id,
+      userId,
+    )
+    .run();
+  if (!result.meta.changes) return null;
+  const saved = await getProgram(userId, id);
+  return saved;
+}
+
+export async function deleteProgram(userId: string, id: string) {
+  const result = await getDatabase()
+    .prepare('DELETE FROM programs WHERE id = ? AND user_id = ?')
+    .bind(id, userId)
+    .run();
+  return Boolean(result.meta.changes);
+}
+

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -14,17 +14,17 @@ export function CoachMessage({
   onComplete?: () => void;
 }) {
   const [visible, setVisible] = useState(animate ? '' : content);
-  const completeRef = useRef(onComplete);
-  completeRef.current = onComplete;
 
   useEffect(() => {
     if (
       !animate ||
       window.matchMedia('(prefers-reduced-motion: reduce)').matches
     ) {
-      setVisible(content);
-      completeRef.current?.();
-      return;
+      const timer = window.setTimeout(() => {
+        setVisible(content);
+        onComplete?.();
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
 
     let index = 0;
@@ -37,11 +37,11 @@ export function CoachMessage({
       setVisible(content.slice(0, index));
       if (index >= content.length) {
         window.clearInterval(timer);
-        completeRef.current?.();
+        onComplete?.();
       }
     }, 18);
     return () => window.clearInterval(timer);
-  }, [animate, content]);
+  }, [animate, content, onComplete]);
 
   const revealing = animate && visible.length < content.length;
 
@@ -64,3 +64,4 @@ export function CoachMessage({
     </div>
   );
 }
+

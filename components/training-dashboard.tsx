@@ -46,6 +46,7 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { CoachMessage } from '@/components/coach-message';
+import { ProgramEditor } from '@/components/program-editor';
 import { WorkoutCalendar } from '@/components/workout-calendar';
 import {
   Select,
@@ -190,6 +191,11 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   );
   const [programBusy, setProgramBusy] = useState(false);
   const [programError, setProgramError] = useState('');
+  const [programActionBusy, setProgramActionBusy] = useState(false);
+  const [programActionError, setProgramActionError] = useState('');
+  const [editingProgramId, setEditingProgramId] = useState<string | null>(null);
+  const [adjustingProgramId, setAdjustingProgramId] = useState<string | null>(null);
+  const [programAdjustment, setProgramAdjustment] = useState('');
   const [programForm, setProgramForm] = useState({
     goal: 'Build muscle and strength',
     durationWeeks: 8,
@@ -482,12 +488,117 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
         throw new Error(payload.error || 'Program generation failed.');
       setPrograms((current) => [payload.program, ...current]);
       setActiveProgram(payload.program);
+      setEditingProgramId(null);
+      setAdjustingProgramId(null);
+      setProgramAdjustment('');
     } catch (error) {
       setProgramError(
         error instanceof Error ? error.message : 'Program generation failed.',
       );
     } finally {
       setProgramBusy(false);
+    }
+  }
+
+  function selectProgram(program: TrainingProgram) {
+    setActiveProgram(program);
+    setEditingProgramId(null);
+    setAdjustingProgramId(null);
+    setProgramAdjustment('');
+    setProgramActionError('');
+  }
+
+  function replaceProgram(program: TrainingProgram) {
+    setPrograms((current) =>
+      current.map((item) => (item.id === program.id ? program : item)),
+    );
+    setActiveProgram(program);
+  }
+
+  async function saveProgramEdits(
+    edits: Omit<TrainingProgram, 'id' | 'createdAt'>,
+  ) {
+    if (!activeProgram) return;
+    setProgramActionBusy(true);
+    setProgramActionError('');
+    try {
+      const response = await fetch('/api/programs', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: activeProgram.id, program: edits }),
+      });
+      const payload = await readJson<{ program: TrainingProgram } & ApiError>(
+        response,
+      );
+      if (!response.ok)
+        throw new Error(payload.error || 'The program could not be saved.');
+      replaceProgram(payload.program);
+      setEditingProgramId(null);
+    } catch (error) {
+      setProgramActionError(
+        error instanceof Error ? error.message : 'The program could not be saved.',
+      );
+    } finally {
+      setProgramActionBusy(false);
+    }
+  }
+
+  async function adjustProgram() {
+    if (!activeProgram || !programAdjustment.trim() || programActionBusy) return;
+    setProgramActionBusy(true);
+    setProgramActionError('');
+    try {
+      const response = await fetch('/api/programs', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: activeProgram.id,
+          adjustment: programAdjustment.trim(),
+        }),
+      });
+      const payload = await readJson<{ program: TrainingProgram } & ApiError>(
+        response,
+      );
+      if (!response.ok)
+        throw new Error(payload.error || 'Rowan could not adjust this program.');
+      replaceProgram(payload.program);
+      setProgramAdjustment('');
+      setAdjustingProgramId(null);
+    } catch (error) {
+      setProgramActionError(
+        error instanceof Error
+          ? error.message
+          : 'Rowan could not adjust this program.',
+      );
+    } finally {
+      setProgramActionBusy(false);
+    }
+  }
+
+  async function removeProgram(program: TrainingProgram) {
+    if (!window.confirm(`Delete “${program.title}” permanently?`)) return;
+    setProgramActionBusy(true);
+    setProgramActionError('');
+    try {
+      const response = await fetch(
+        `/api/programs?id=${encodeURIComponent(program.id)}`,
+        { method: 'DELETE' },
+      );
+      const payload = await readJson<ApiError>(response);
+      if (!response.ok)
+        throw new Error(payload.error || 'The program could not be deleted.');
+      const remaining = programs.filter((item) => item.id !== program.id);
+      setPrograms(remaining);
+      setActiveProgram(remaining[0] ?? null);
+      setEditingProgramId(null);
+      setAdjustingProgramId(null);
+      setProgramAdjustment('');
+    } catch (error) {
+      setProgramActionError(
+        error instanceof Error ? error.message : 'The program could not be deleted.',
+      );
+    } finally {
+      setProgramActionBusy(false);
     }
   }
 
@@ -1280,7 +1391,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                   <button
                     type="button"
                     key={program.id}
-                    onClick={() => setActiveProgram(program)}
+                    onClick={() => selectProgram(program)}
                     className={activeProgram?.id === program.id ? 'active' : ''}
                   >
                     <strong>{program.title}</strong>
@@ -1293,65 +1404,163 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
             </aside>
             <div className="program-document">
               {activeProgram ? (
-                <>
-                  <header>
-                    <div>
-                      <p className="eyebrow">
-                        ACTIVE DRAFT / {activeProgram.durationWeeks} WEEKS
+                editingProgramId === activeProgram.id ? (
+                  <ProgramEditor
+                    key={activeProgram.id}
+                    program={activeProgram}
+                    busy={programActionBusy}
+                    onCancel={() => setEditingProgramId(null)}
+                    onSave={saveProgramEdits}
+                  />
+                ) : (
+                  <>
+                    <header>
+                      <div>
+                        <p className="eyebrow">
+                          ACTIVE DRAFT / {activeProgram.durationWeeks} WEEKS
+                        </p>
+                        <h2>{activeProgram.title}</h2>
+                        <p>{activeProgram.overview}</p>
+                      </div>
+                      <div className="program-document-actions">
+                        <StatusPill>
+                          {activeProgram.daysPerWeek} days ·{' '}
+                          {activeProgram.minutesPerSession} min
+                        </StatusPill>
+                        <div className="program-action-buttons">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setProgramActionError('');
+                              setEditingProgramId(activeProgram.id);
+                              setAdjustingProgramId(null);
+                            }}
+                            disabled={programActionBusy}
+                          >
+                            Edit workouts
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setProgramActionError('');
+                              setAdjustingProgramId((current) =>
+                                current === activeProgram.id ? null : activeProgram.id,
+                              );
+                              setProgramAdjustment('');
+                            }}
+                            disabled={programActionBusy}
+                          >
+                            <Sparkles />
+                            Ask Rowan
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => void removeProgram(activeProgram)}
+                            disabled={programActionBusy}
+                          >
+                            <Trash2 />
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
+                    </header>
+                    {adjustingProgramId === activeProgram.id && (
+                      <form
+                        className="program-adjustment"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void adjustProgram();
+                        }}
+                      >
+                        <label>
+                          <span>Tell Rowan what to change</span>
+                          <textarea
+                            rows={3}
+                            value={programAdjustment}
+                            onChange={(event) =>
+                              setProgramAdjustment(event.target.value)
+                            }
+                            placeholder="e.g. Replace barbell squats with a knee-friendly quad movement and keep each session under 45 minutes."
+                          />
+                        </label>
+                        <div>
+                          <Button
+                            type="submit"
+                            size="sm"
+                            disabled={programActionBusy || !programAdjustment.trim()}
+                          >
+                            {programActionBusy ? 'Rowan is revising…' : 'Apply adjustment'}
+                            <Sparkles />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setAdjustingProgramId(null)}
+                            disabled={programActionBusy}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </form>
+                    )}
+                    {programActionError && (
+                      <p className="form-error program-action-error">
+                        {programActionError}
                       </p>
-                      <h2>{activeProgram.title}</h2>
-                      <p>{activeProgram.overview}</p>
+                    )}
+                    <div className="program-principles">
+                      <div>
+                        <span>Progression</span>
+                        <p>{activeProgram.progression}</p>
+                      </div>
+                      <div>
+                        <span>Deload</span>
+                        <p>{activeProgram.deload}</p>
+                      </div>
                     </div>
-                    <StatusPill>
-                      {activeProgram.daysPerWeek} days ·{' '}
-                      {activeProgram.minutesPerSession} min
-                    </StatusPill>
-                  </header>
-                  <div className="program-principles">
-                    <div>
-                      <span>Progression</span>
-                      <p>{activeProgram.progression}</p>
-                    </div>
-                    <div>
-                      <span>Deload</span>
-                      <p>{activeProgram.deload}</p>
-                    </div>
-                  </div>
-                  <div className="training-days">
-                    {activeProgram.days.map((day) => (
-                      <article key={`${activeProgram.id}-${day.day}`}>
-                        <div className="day-heading">
-                          <span>DAY {String(day.day).padStart(2, '0')}</span>
-                          <div>
-                            <h3>{day.title}</h3>
-                            <p>{day.focus}</p>
-                          </div>
-                        </div>
-                        <div className="day-exercises">
-                          {day.exercises.map((exercise, index) => (
-                            <div key={`${exercise.name}-${index}`}>
-                              <span>{index + 1}</span>
-                              <div>
-                                <strong>{exercise.name}</strong>
-                                <small>{exercise.note}</small>
-                              </div>
-                              <b>
-                                {exercise.sets} × {exercise.reps}
-                              </b>
-                              <em>
-                                {exercise.effort} · {exercise.restSeconds}s
-                              </em>
+                    <div className="training-days">
+                      {activeProgram.days.map((day) => (
+                        <article key={`${activeProgram.id}-${day.day}`}>
+                          <div className="day-heading">
+                            <span>DAY {String(day.day).padStart(2, '0')}</span>
+                            <div>
+                              <h3>{day.title}</h3>
+                              <p>{day.focus}</p>
                             </div>
-                          ))}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                  <p className="draft-note">
-                    This is a planning draft. Review exercise suitability and
-                    technique before training; nothing has been written to Hevy.
-                  </p>
-                </>
+                          </div>
+                          <div className="day-exercises">
+                            {day.exercises.map((exercise, index) => (
+                              <div key={`${exercise.name}-${index}`}>
+                                <span>{index + 1}</span>
+                                <div>
+                                  <strong>{exercise.name}</strong>
+                                  <small>{exercise.note}</small>
+                                </div>
+                                <b>
+                                  {exercise.sets} × {exercise.reps}
+                                </b>
+                                <em>
+                                  {exercise.effort} · {exercise.restSeconds}s
+                                </em>
+                              </div>
+                            ))}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                    <p className="draft-note">
+                      This is a planning draft. Review exercise suitability and
+                      technique before training; nothing has been written to Hevy.
+                    </p>
+                  </>
+                )
               ) : (
                 <EmptyMessage
                   title="No program yet"
@@ -1634,3 +1843,4 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     </div>
   );
 }
+

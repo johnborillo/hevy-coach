@@ -32,7 +32,13 @@ type OpenRouterMessage = {
 
 type CompletionPayload = {
   model?: string;
-  choices?: Array<{ message?: { content?: string } }>;
+  choices?: Array<{
+    finish_reason?: string | null;
+    message?: {
+      content?: string | Array<{ type?: string; text?: string }> | null;
+      reasoning?: string | null;
+    };
+  }>;
 };
 
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504, 524, 529]);
@@ -84,7 +90,38 @@ async function requestCompletion(
         signal: AbortSignal.timeout(timeoutMs),
       });
 
-      if (response.ok) return (await response.json()) as CompletionPayload;
+      if (response.ok) {
+        const payload = (await response.json()) as CompletionPayload;
+        const message = payload.choices?.[0]?.message;
+        const content = message?.content;
+        const hasContent =
+          (typeof content === 'string' && content.trim().length > 0) ||
+          (Array.isArray(content) &&
+            content.some(
+              (part) => typeof part.text === 'string' && part.text.trim(),
+            ));
+
+        // OpenRouter can return HTTP 200 with a zero-token/empty completion.
+        // Treat that as transient so a provider hiccup does not immediately
+        // send the athlete to the local evidence engine.
+        if (!hasContent) {
+          if (attempt === 2) {
+            throw new OpenRouterRequestError(
+              'OpenRouter returned an empty response',
+              502,
+              null,
+            );
+          }
+          console.warn('Retrying an empty OpenRouter response', {
+            attempt: attempt + 1,
+            finishReason: payload.choices?.[0]?.finish_reason ?? null,
+            hadReasoning: Boolean(message?.reasoning),
+          });
+          await wait(retryDelay(response, attempt));
+          continue;
+        }
+        return payload;
+      }
 
       const detail = (await response.json().catch(() => null)) as {
         error?: { code?: string | number; message?: string };
@@ -118,9 +155,50 @@ async function requestCompletion(
 
 function extractJson(content: string) {
   const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
-  const candidate =
-    fenced ?? content.slice(content.indexOf('{'), content.lastIndexOf('}') + 1);
+  const source = fenced ?? content;
+  const start = source.indexOf('{');
+  if (start < 0) throw new Error('The model did not return a JSON object');
+
+  let depth = 0;
+  let end = -1;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < source.length; index += 1) {
+    const character = source[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === '{') depth += 1;
+    if (character === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        end = index + 1;
+        break;
+      }
+    }
+  }
+  if (end < 0) throw new Error('The model returned incomplete JSON');
+  const candidate = source.slice(start, end);
   return JSON.parse(candidate) as Omit<TrainingProgram, 'id' | 'createdAt'>;
+}
+
+function messageContent(payload: CompletionPayload) {
+  const content = payload.choices?.[0]?.message?.content;
+  if (typeof content === 'string') return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (typeof part.text === 'string' ? part.text : ''))
+      .join('')
+      .trim();
+  }
+  return '';
 }
 
 function compactContext(profile: AthleteProfile, dashboard: DashboardData) {
@@ -164,13 +242,14 @@ export async function askCoach(
       model,
       messages,
       temperature: 0.35,
-      max_tokens: 1000,
+      max_tokens: 1400,
+      reasoning: { effort: 'none', exclude: true },
       provider: { data_collection: 'deny', allow_fallbacks: true },
     },
     45_000,
   );
   if (!payload) return null;
-  const content = payload.choices?.[0]?.message?.content?.trim();
+  const content = messageContent(payload);
   if (!content) throw new Error('OpenRouter returned an empty response');
   return { content, model: payload.model ?? model };
 }
@@ -192,7 +271,9 @@ export async function generateProgramWithCoach(
     {
       model,
       temperature: 0.2,
-      max_tokens: 2200,
+      max_tokens: 5000,
+      reasoning: { effort: 'none', exclude: true },
+      response_format: { type: 'json_object' },
       provider: { data_collection: 'deny', allow_fallbacks: true },
       messages: [
         { role: 'system', content: COACH_PERSONA },
@@ -205,7 +286,43 @@ export async function generateProgramWithCoach(
     60_000,
   );
   if (!payload) return null;
-  const content = payload.choices?.[0]?.message?.content;
+  const content = messageContent(payload);
   if (!content) throw new Error('OpenRouter returned an empty program');
   return extractJson(content);
 }
+
+export async function adjustProgramWithCoach(
+  profile: AthleteProfile,
+  dashboard: DashboardData,
+  program: TrainingProgram,
+  adjustment: string,
+) {
+  const model =
+    process.env.OPENROUTER_MODEL || 'deepseek/deepseek-v4-flash-0731';
+  const payload = await requestCompletion(
+    {
+      model,
+      temperature: 0.15,
+      max_tokens: 5000,
+      reasoning: { effort: 'none', exclude: true },
+      response_format: { type: 'json_object' },
+      provider: { data_collection: 'deny', allow_fallbacks: true },
+      messages: [
+        {
+          role: 'system',
+          content: `${COACH_PERSONA}\n\nFor this request, act as a careful program editor. Return only one valid JSON object using the exact program schema. Return the complete replacement program, not a patch or commentary. Preserve the program's duration, days, and session length unless the athlete explicitly asks to change them.`,
+        },
+        {
+          role: 'user',
+          content: `Adjust this saved training program according to the athlete's request. Keep useful exercises and progression logic where they still fit. Never invent an injury diagnosis.\n\nAthlete request: ${adjustment}\n\nCurrent program:\n${JSON.stringify(program)}\n\nPrivate training context:\n${compactContext(profile, dashboard)}\n\nSchema reminder: title, goal, durationWeeks, daysPerWeek, minutesPerSession, overview, progression, deload, and days. Each day needs day, title, focus, exercises. Each exercise needs name, sets (number), reps (string), effort, restSeconds (number), and note.`,
+        },
+      ],
+    },
+    60_000,
+  );
+  if (!payload) return null;
+  const content = messageContent(payload);
+  if (!content) throw new Error('OpenRouter returned an empty adjusted program');
+  return extractJson(content);
+}
+

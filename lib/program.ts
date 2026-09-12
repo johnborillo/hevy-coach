@@ -14,12 +14,44 @@ export function buildFallbackProgram(
   profile: AthleteProfile,
   dashboard: DashboardData,
 ): Omit<TrainingProgram, 'id' | 'createdAt'> {
-  const options = dashboard.exerciseOptions.length
-    ? dashboard.exerciseOptions
+  const lowerGoal = /\b(leg|legs|lower|quad|hamstring|glute|calf)\b/i.test(input.goal);
+  const loggedOptions = [
+    ...dashboard.exerciseOptions,
+    ...dashboard.exerciseStats.map((exercise) => ({
+      name: exercise.exercise,
+      muscle: exercise.muscle,
+      sets: Math.min(Math.max(Math.round(exercise.workingSets / Math.max(exercise.sessions, 1)), 2), 4),
+      reps: null,
+      weightKg: null,
+      note: 'Match the last clean effort; add a rep before load when possible.',
+    })),
+  ];
+  const uniqueOptions = loggedOptions.filter(
+    (exercise, index, all) => all.findIndex((item) => item.name === exercise.name) === index,
+  );
+  const lowerOptions = uniqueOptions.filter((exercise) =>
+    /quad|hamstring|glute|calf|leg|lower|squat|deadlift|lunge|hip/i.test(
+      `${exercise.name} ${exercise.muscle}`,
+    ),
+  );
+  const fallbackLower = [
+    { name: 'Squat', muscle: 'Quadriceps', sets: 3, reps: 8, weightKg: null, note: 'Use a controlled effort and stop with clean reps in reserve.' },
+    { name: 'Romanian Deadlift', muscle: 'Hamstrings', sets: 3, reps: 8, weightKg: null, note: 'Keep the eccentric controlled and brace consistently.' },
+    { name: 'Leg Press', muscle: 'Quadriceps', sets: 3, reps: 10, weightKg: null, note: 'Use a stable range of motion that keeps the pelvis controlled.' },
+    { name: 'Leg Curl', muscle: 'Hamstrings', sets: 3, reps: 12, weightKg: null, note: 'Pause briefly in the shortened position.' },
+    { name: 'Calf Raise', muscle: 'Calves', sets: 3, reps: 12, weightKg: null, note: 'Use a full stretch and controlled pause.' },
+  ];
+  const allOptions = uniqueOptions.length
+    ? uniqueOptions
     : [{ name: 'Primary compound', muscle: 'Full body', sets: 3, reps: 8, weightKg: null, note: 'Use a controlled effort.' }];
-  const dayNames = input.daysPerWeek <= 3
-    ? ['Full Body A', 'Full Body B', 'Full Body C']
-    : ['Upper A', 'Lower A', 'Upper B', 'Lower B', 'Full Body'];
+  const options = lowerGoal
+    ? (lowerOptions.length ? lowerOptions : fallbackLower)
+    : allOptions;
+  const dayNames = lowerGoal
+    ? ['Lower A', 'Lower B', 'Lower C', 'Lower D', 'Lower E']
+    : input.daysPerWeek <= 3
+      ? ['Full Body A', 'Full Body B', 'Full Body C']
+      : ['Upper A', 'Lower A', 'Upper B', 'Lower B', 'Full Body'];
   const exercisesPerDay = input.minutesPerSession <= 40 ? 4 : input.minutesPerSession <= 60 ? 5 : 6;
   const days = Array.from({ length: input.daysPerWeek }, (_, dayIndex) => ({
     day: dayIndex + 1,
@@ -61,3 +93,4 @@ Weekly review: ${JSON.stringify(dashboard.weeklyReview)}
 
 Respect the requested days, duration, goal, available equipment, limitations, and session time. Prefer familiar logged movements where appropriate. Return JSON only.`;
 }
+
