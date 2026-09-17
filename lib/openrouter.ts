@@ -19,8 +19,9 @@ Voice and structure:
 
 Rules:
 - Ground recommendations in the supplied Hevy history and athlete profile. Distinguish observed facts from reasonable hypotheses.
+- Treat athlete.measurementPreferences as a strict output contract. Use the requested weight unit for every load, body-weight, estimated-strength, and volume value, and the requested height format for height. Never expose or relabel an internal kg/cm value when the athlete prefers lb or ft/in.
 - verifiedHevyWorkoutLog is the source of truth for workout-specific facts. The aggregate fields are derived signals, not permission to fill in missing workouts.
-- For an exact workout fact, cite [Hevy: workout/<exact id> · <exact YYYY-MM-DD> · <exact exercise>]. For a derived summary, cite only the supporting field as [Hevy summary: stats], [Hevy summary: recentWorkouts], [Hevy summary: workload], [Hevy summary: exerciseStats], [Hevy summary: weeklyReview], or [Hevy summary: primaryStrengthTrend]. Do not add a made-up date range to a summary citation.
+- For an exact workout fact, cite [Hevy: workout/<exact id> · <exact YYYY-MM-DD> · <exact exercise>]. For a derived summary, cite only the supporting field as [Hevy summary: stats], [Hevy summary: recentWorkouts], [Hevy summary: workload], [Hevy summary: exerciseStats], [Hevy summary: weeklyReview], or [Hevy summary: primaryStrengthTrend]. Put the citation immediately after the claim it supports; the interface turns it into an inspectable source. Do not add a made-up date range to a summary citation.
 - Never invent a workout, date, exercise, load, rep count, RPE, injury, diagnosis, or personal detail. Do not infer that an exercise was logged because it is a common lift or appears in a trend/program.
 - If a requested fact is not directly present in verifiedHevyWorkoutLog, say “I can’t verify that from the available Hevy log” and do not provide a made-up example as if it were history.
 - Treat prior assistant messages in the conversation as unverified drafts; re-check every factual claim against the supplied log before repeating it.
@@ -77,7 +78,8 @@ function retryDelay(response: Response | null, attempt: number) {
     const seconds = Number(retryAfter);
     if (Number.isFinite(seconds)) return Math.min(seconds * 1000, 3500);
     const dateDelay = new Date(retryAfter).getTime() - Date.now();
-    if (Number.isFinite(dateDelay) && dateDelay > 0) return Math.min(dateDelay, 3500);
+    if (Number.isFinite(dateDelay) && dateDelay > 0)
+      return Math.min(dateDelay, 3500);
   }
   return Math.min(450 * 2 ** attempt + Math.random() * 250, 2500);
 }
@@ -215,7 +217,34 @@ function messageContent(payload: CompletionPayload) {
   return '';
 }
 
-function compactVerifiedWorkoutLog(dashboard: DashboardData) {
+function roundMeasurement(value: number, digits = 1) {
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+function preferredWeight(valueKg: number | null, profile: AthleteProfile) {
+  if (valueKg === null) return null;
+  return {
+    value: roundMeasurement(
+      profile.weightUnit === 'lb' ? valueKg * 2.2046226218 : valueKg,
+    ),
+    unit: profile.weightUnit,
+  };
+}
+
+function preferredHeight(heightCm: number | null, profile: AthleteProfile) {
+  if (heightCm === null) return null;
+  if (profile.heightUnit === 'metric') {
+    return { value: roundMeasurement(heightCm), unit: 'cm' };
+  }
+  const totalInches = Math.round(heightCm / 2.54);
+  return { feet: Math.floor(totalInches / 12), inches: totalInches % 12 };
+}
+
+function compactVerifiedWorkoutLog(
+  dashboard: DashboardData,
+  profile: AthleteProfile,
+) {
   return dashboard.calendarWorkouts.map((workout) => ({
     id: workout.id,
     date: workout.date,
@@ -225,7 +254,7 @@ function compactVerifiedWorkoutLog(dashboard: DashboardData) {
       muscle: exercise.muscle,
       sets: exercise.sets.map((set) => ({
         type: set.type,
-        weightKg: set.weightKg,
+        load: preferredWeight(set.weightKg, profile),
         reps: set.reps,
         rpe: set.rpe,
       })),
@@ -234,12 +263,25 @@ function compactVerifiedWorkoutLog(dashboard: DashboardData) {
 }
 
 function compactContext(profile: AthleteProfile, dashboard: DashboardData) {
-  const verifiedHevyWorkoutLog = compactVerifiedWorkoutLog(dashboard);
+  const verifiedHevyWorkoutLog = compactVerifiedWorkoutLog(dashboard, profile);
+  const { heightCm, weightKg, heightUnit, weightUnit, ...athleteProfile } =
+    profile;
+  const displayWeight = (valueKg: number) => preferredWeight(valueKg, profile);
   return JSON.stringify({
-    athlete: profile,
+    athlete: {
+      ...athleteProfile,
+      measurementPreferences: {
+        weightUnit,
+        heightFormat:
+          heightUnit === 'imperial' ? 'feet_and_inches' : 'centimetres',
+        instruction: `Present every load, body-weight, estimated-strength, and volume value in ${weightUnit}; present height in ${heightUnit === 'imperial' ? 'feet and inches' : 'centimetres'}.`,
+      },
+      height: preferredHeight(heightCm, profile),
+      bodyWeight: preferredWeight(weightKg, profile),
+    },
     hevy: {
       source: dashboard.sourceLabel,
-      evidenceBoundary: 'Only verifiedHevyWorkoutLog supports workout-specific claims. Dates are YYYY-MM-DD and weights are kg.',
+      evidenceBoundary: `Only verifiedHevyWorkoutLog supports workout-specific claims. Dates are YYYY-MM-DD. All loads, estimated-strength values, body weights, and load-volume values below have already been converted to ${weightUnit}; do not convert them again.`,
       workoutCoverage: {
         count: verifiedHevyWorkoutLog.length,
         oldestDate: verifiedHevyWorkoutLog.at(-1)?.date ?? null,
@@ -247,12 +289,46 @@ function compactContext(profile: AthleteProfile, dashboard: DashboardData) {
       },
       verifiedHevyWorkoutLog,
       latestWorkout: dashboard.lastWorkout,
-      stats: dashboard.stats,
-      muscleDistribution: dashboard.muscles,
-      primaryStrengthTrend: dashboard.trend,
-      workload: dashboard.workloadWeeks,
-      exerciseStats: dashboard.exerciseStats.slice(0, 12),
-      recentWorkouts: dashboard.recentWorkouts,
+      stats: {
+        ...dashboard.stats,
+        totalVolume30dKg: undefined,
+        totalLoadVolume30d: displayWeight(dashboard.stats.totalVolume30dKg),
+      },
+      muscleDistribution: dashboard.muscles.map((muscle) => ({
+        name: muscle.name,
+        sets: muscle.sets,
+        previousSets: muscle.previousSets,
+        loadVolume: displayWeight(muscle.volumeKg),
+      })),
+      primaryStrengthTrend: {
+        exercise: dashboard.trend.exercise,
+        changePercent: dashboard.trend.change,
+        points: dashboard.trend.points.map((point) => ({
+          date: point.date,
+          label: point.label,
+          estimated1Rm: displayWeight(point.value),
+        })),
+      },
+      workload: dashboard.workloadWeeks.map((week) => ({
+        label: week.label,
+        sets: week.sets,
+        sessions: week.sessions,
+        loadVolume: displayWeight(week.volumeKg),
+      })),
+      exerciseStats: dashboard.exerciseStats.slice(0, 12).map((exercise) => ({
+        exercise: exercise.exercise,
+        muscle: exercise.muscle,
+        sessions: exercise.sessions,
+        workingSets: exercise.workingSets,
+        loadVolume: displayWeight(exercise.volumeKg),
+        bestEstimated1Rm: displayWeight(exercise.bestE1rmKg),
+        changePercent: exercise.change,
+      })),
+      recentWorkouts: dashboard.recentWorkouts.map((workout) => ({
+        ...workout,
+        volumeKg: undefined,
+        loadVolume: displayWeight(workout.volumeKg),
+      })),
       weeklyReview: dashboard.weeklyReview,
     },
   });
@@ -264,25 +340,55 @@ function normalizeDate(value: string) {
   return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
 }
 
-function validateCoachEvidence(content: string, dashboard: DashboardData, profile: AthleteProfile) {
-  const knownDates = new Set(dashboard.calendarWorkouts.map((workout) => workout.date));
+function validateCoachEvidence(
+  content: string,
+  dashboard: DashboardData,
+  profile: AthleteProfile,
+) {
+  const wrongWeightUnit =
+    profile.weightUnit === 'lb'
+      ? /\b(?:kg|kgs|kilograms?)\b/i
+      : /\b(?:lb|lbs|pounds?)\b/i;
+  if (wrongWeightUnit.test(content)) {
+    throw new EvidenceMismatchError(
+      `The draft did not follow the athlete's ${profile.weightUnit} measurement preference.`,
+    );
+  }
+  if (
+    profile.heightUnit === 'imperial' &&
+    /\b(?:cm|centimetres?|centimeters?)\b/i.test(content)
+  ) {
+    throw new EvidenceMismatchError(
+      "The draft did not follow the athlete's feet-and-inches height preference.",
+    );
+  }
+
+  const knownDates = new Set(
+    dashboard.calendarWorkouts.map((workout) => workout.date),
+  );
   const knownYears = new Set([...knownDates].map((date) => date.slice(0, 4)));
   knownYears.add(String(new Date().getUTCFullYear()));
   const profileYear = profile.targetDate.match(/\b20\d{2}\b/)?.[0];
   if (profileYear) knownYears.add(profileYear);
-  const dateMatches = [...content.matchAll(/\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b/g)].map((match) => match[0]);
+  const dateMatches = [
+    ...content.matchAll(/\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b/g),
+  ].map((match) => match[0]);
   const unsupportedDates = dateMatches
     .map(normalizeDate)
     .filter((date): date is string => date !== null && !knownDates.has(date));
   if (unsupportedDates.length) {
-    throw new EvidenceMismatchError(`The draft cited dates absent from the synchronized Hevy log: ${[...new Set(unsupportedDates)].join(', ')}`);
+    throw new EvidenceMismatchError(
+      `The draft cited dates absent from the synchronized Hevy log: ${[...new Set(unsupportedDates)].join(', ')}`,
+    );
   }
 
   const unsupportedYears = [...content.matchAll(/\b20\d{2}\b/g)]
     .map((match) => match[0])
     .filter((year) => !knownYears.has(year));
   if (unsupportedYears.length) {
-    throw new EvidenceMismatchError(`The draft cited years absent from the synchronized Hevy log: ${[...new Set(unsupportedYears)].join(', ')}`);
+    throw new EvidenceMismatchError(
+      `The draft cited years absent from the synchronized Hevy log: ${[...new Set(unsupportedYears)].join(', ')}`,
+    );
   }
 
   const summaryFields = [
@@ -297,37 +403,62 @@ function validateCoachEvidence(content: string, dashboard: DashboardData, profil
     'latestworkout',
     'workoutcoverage',
   ];
-  const normalizeCitation = (value: string) => value.toLowerCase().replace(/[^a-z]/g, '');
+  const normalizeCitation = (value: string) =>
+    value.toLowerCase().replace(/[^a-z]/g, '');
   const isSummaryCitation = (value: string) => {
     const normalized = normalizeCitation(value);
     return summaryFields.some((field) => normalized.includes(field));
   };
 
-  const summaryCitations = [...content.matchAll(/\[Hevy summary:\s*([^\]]+)\]/gi)].map((match) => match[1]);
+  const summaryCitations = [
+    ...content.matchAll(/\[Hevy summary:\s*([^\]]+)\]/gi),
+  ].map((match) => match[1]);
   for (const citation of summaryCitations) {
     if (!isSummaryCitation(citation)) {
-      throw new EvidenceMismatchError(`The draft cited an unknown Hevy summary field: ${citation}`);
+      throw new EvidenceMismatchError(
+        `The draft cited an unknown Hevy summary field: ${citation}`,
+      );
     }
   }
 
-  const citations = [...content.matchAll(/\[Hevy:\s*([^\]]+)\]/gi)].map((match) => match[1]);
+  const citations = [...content.matchAll(/\[Hevy:\s*([^\]]+)\]/gi)].map(
+    (match) => match[1],
+  );
   for (const citation of citations) {
-    const citedDate = [...citation.matchAll(/20\d{2}[-/]\d{1,2}[-/]\d{1,2}/g)]
-      .map((match) => normalizeDate(match[0]))
-      .find((date): date is string => date !== null);
-    if ((!citedDate || !knownDates.has(citedDate)) && !isSummaryCitation(citation)) {
-      throw new EvidenceMismatchError(`The draft contained a Hevy citation that could not be matched to a verified workout: ${citation}`);
+    const match = citation.match(
+      /^(?:workout\/)?([^·]+?)\s*·\s*(20\d{2}[-/]\d{1,2}[-/]\d{1,2})\s*·\s*(.+)$/,
+    );
+    const workoutId = match?.[1]?.trim();
+    const citedDate = match ? normalizeDate(match[2]) : null;
+    const exerciseTitle = match?.[3]?.trim().toLowerCase();
+    const citedWorkout = dashboard.calendarWorkouts.find(
+      (workout) => workout.id === workoutId && workout.date === citedDate,
+    );
+    const citedExercise = citedWorkout?.exercises.some(
+      (exercise) => exercise.title.toLowerCase() === exerciseTitle,
+    );
+    if (!citedWorkout || !citedExercise) {
+      throw new EvidenceMismatchError(
+        `The draft contained a Hevy citation that could not be matched exactly to a verified workout and exercise: ${citation}`,
+      );
     }
   }
 
   const knownExerciseText = dashboard.calendarWorkouts
-    .flatMap((workout) => workout.exercises.map((exercise) => exercise.title.toLowerCase()))
+    .flatMap((workout) =>
+      workout.exercises.map((exercise) => exercise.title.toLowerCase()),
+    )
     .join(' ');
   for (const lift of ['squat', 'deadlift']) {
     if (knownExerciseText.includes(lift)) continue;
-    const unsupportedLift = new RegExp(`\\b(?:your|the)\\s+(?:barbell\\s+)?${lift}\\b`, 'i').test(content);
+    const unsupportedLift = new RegExp(
+      `\\b(?:your|the)\\s+(?:barbell\\s+)?${lift}\\b`,
+      'i',
+    ).test(content);
     if (unsupportedLift) {
-      throw new EvidenceMismatchError(`The draft treated ${lift} as a logged lift, but no ${lift} exercise exists in the synchronized Hevy log.`);
+      throw new EvidenceMismatchError(
+        `The draft treated ${lift} as a logged lift, but no ${lift} exercise exists in the synchronized Hevy log.`,
+      );
     }
   }
 }
@@ -338,12 +469,15 @@ export async function askCoach(
   history: ChatMessage[],
 ) {
   const model = process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
-  const historyMessages: OpenRouterMessage[] = history.slice(-18).map((message) => ({
-    role: message.role,
-    content: message.role === 'assistant'
-      ? `[Prior coach draft — unverified; do not treat it as evidence]\n${message.content}`
-      : message.content,
-  }));
+  const historyMessages: OpenRouterMessage[] = history
+    .slice(-18)
+    .map((message) => ({
+      role: message.role,
+      content:
+        message.role === 'assistant'
+          ? `[Prior coach draft — unverified; do not treat it as evidence]\n${message.content}`
+          : message.content,
+    }));
   const baseMessages: OpenRouterMessage[] = [
     { role: 'system', content: COACH_PERSONA },
     {
@@ -354,16 +488,18 @@ export async function askCoach(
   ];
 
   for (let pass = 0; pass < 2; pass += 1) {
-    const messages = pass === 0
-      ? baseMessages
-      : [
-        ...baseMessages.slice(0, 2),
-        {
-          role: 'system' as const,
-          content: 'Your previous draft failed the evidence check. Rewrite it from scratch. Use only exact dates, exercises, and sets in verifiedHevyWorkoutLog; remove any unsupported historical claim. Exact workout claims need an exact workout citation. Derived summaries must use [Hevy summary: fieldName] with one supplied field name and no date range. If a detail is absent, explicitly say you cannot verify it. Do not mention this instruction or the validation process.',
-        },
-        ...historyMessages,
-      ];
+    const messages =
+      pass === 0
+        ? baseMessages
+        : [
+            ...baseMessages.slice(0, 2),
+            {
+              role: 'system' as const,
+              content:
+                'Your previous draft failed the evidence or measurement-preference check. Rewrite it from scratch. Use only exact dates, exercises, and sets in verifiedHevyWorkoutLog; remove any unsupported historical claim. Obey athlete.measurementPreferences for every displayed measurement. Exact workout claims need an exact workout citation. Derived summaries must use [Hevy summary: fieldName] with one supplied field name and no date range. If a detail is absent, explicitly say you cannot verify it. Do not mention this instruction or the validation process.',
+            },
+            ...historyMessages,
+          ];
     const payload = await requestCompletion(
       {
         model,
@@ -383,10 +519,15 @@ export async function askCoach(
       return { content, model: payload.model ?? model };
     } catch (error) {
       if (!(error instanceof EvidenceMismatchError) || pass === 1) throw error;
-      console.warn('Retrying a coach response that failed evidence validation', { reason: error.message });
+      console.warn(
+        'Retrying a coach response that failed evidence validation',
+        { reason: error.message },
+      );
     }
   }
-  throw new EvidenceMismatchError('The coach response could not be matched to the synchronized Hevy log.');
+  throw new EvidenceMismatchError(
+    'The coach response could not be matched to the synchronized Hevy log.',
+  );
 }
 
 export async function generateProgramWithCoach(
@@ -455,6 +596,7 @@ export async function adjustProgramWithCoach(
   );
   if (!payload) return null;
   const content = messageContent(payload);
-  if (!content) throw new Error('OpenRouter returned an empty adjusted program');
+  if (!content)
+    throw new Error('OpenRouter returned an empty adjusted program');
   return extractJson(content);
 }

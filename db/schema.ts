@@ -1,4 +1,10 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import {
+  index,
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/sqlite-core';
 
 export const athleteProfiles = sqliteTable('athlete_profiles', {
   userId: text('user_id').primaryKey(),
@@ -7,8 +13,12 @@ export const athleteProfiles = sqliteTable('athlete_profiles', {
   age: integer('age'),
   heightCm: integer('height_cm'),
   weightKg: integer('weight_kg'),
+  weightUnit: text('weight_unit').notNull().default('lb'),
+  heightUnit: text('height_unit').notNull().default('imperial'),
   experience: text('experience').notNull().default('intermediate'),
-  primaryGoal: text('primary_goal').notNull().default('Build muscle and strength'),
+  primaryGoal: text('primary_goal')
+    .notNull()
+    .default('Build muscle and strength'),
   targetDate: text('target_date'),
   daysPerWeek: integer('days_per_week').notNull().default(4),
   minutesPerSession: integer('minutes_per_session').notNull().default(60),
@@ -27,7 +37,9 @@ export const conversations = sqliteTable(
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
   },
-  (table) => [index('idx_conversations_user_updated').on(table.userId, table.updatedAt)],
+  (table) => [
+    index('idx_conversations_user_updated').on(table.userId, table.updatedAt),
+  ],
 );
 
 export const messages = sqliteTable(
@@ -41,7 +53,12 @@ export const messages = sqliteTable(
     model: text('model'),
     createdAt: text('created_at').notNull(),
   },
-  (table) => [index('idx_messages_conversation_created').on(table.conversationId, table.createdAt)],
+  (table) => [
+    index('idx_messages_conversation_created').on(
+      table.conversationId,
+      table.createdAt,
+    ),
+  ],
 );
 
 export const programs = sqliteTable(
@@ -57,7 +74,9 @@ export const programs = sqliteTable(
     contentJson: text('content_json').notNull(),
     createdAt: text('created_at').notNull(),
   },
-  (table) => [index('idx_programs_user_created').on(table.userId, table.createdAt)],
+  (table) => [
+    index('idx_programs_user_created').on(table.userId, table.createdAt),
+  ],
 );
 
 export const weeklyReviews = sqliteTable(
@@ -70,6 +89,9 @@ export const weeklyReviews = sqliteTable(
     createdAt: text('created_at').notNull(),
   },
   (table) => [
-    uniqueIndex('idx_weekly_reviews_user_week').on(table.userId, table.weekStart),
+    uniqueIndex('idx_weekly_reviews_user_week').on(
+      table.userId,
+      table.weekStart,
+    ),
   ],
 );

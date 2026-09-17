@@ -6,15 +6,14 @@ import { CalendarDays, Clock3, Dumbbell } from 'lucide-react';
 import { DayPicker } from 'react-day-picker';
 
 import type { CalendarWorkout } from '@/lib/hevy';
+import type { WeightUnit } from '@/lib/storage';
 
-type Unit = 'kg' | 'lb';
-
-function displayWeight(valueKg: number, unit: Unit) {
+function displayWeight(valueKg: number, unit: WeightUnit) {
   const value = unit === 'kg' ? valueKg : valueKg * 2.20462;
   return `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${unit}`;
 }
 
-function displayVolume(valueKg: number, unit: Unit) {
+function displayVolume(valueKg: number, unit: WeightUnit) {
   const value = unit === 'kg' ? valueKg : valueKg * 2.20462;
   return `${Math.round(value).toLocaleString()} ${unit}`;
 }
@@ -25,7 +24,7 @@ function toDate(day: string) {
 
 function setLabel(
   set: CalendarWorkout['exercises'][number]['sets'][number],
-  unit: Unit,
+  unit: WeightUnit,
 ) {
   const load = set.weightKg ? displayWeight(set.weightKg, unit) : null;
   if (load && set.reps) return `${load} × ${set.reps}`;
@@ -42,11 +41,16 @@ function typeLabel(type: string) {
 export function WorkoutCalendar({
   workouts,
   unit,
+  initialDate,
+  onSelectedDateChange,
 }: {
   workouts: CalendarWorkout[];
-  unit: Unit;
+  unit: WeightUnit;
+  initialDate?: string | null;
+  onSelectedDateChange?: (date: string) => void;
 }) {
-  const initialDay = workouts[0]?.date ?? format(new Date(), 'yyyy-MM-dd');
+  const initialDay =
+    initialDate ?? workouts[0]?.date ?? format(new Date(), 'yyyy-MM-dd');
   const [selected, setSelected] = useState(() => toDate(initialDay));
   const [month, setMonth] = useState(() => toDate(initialDay));
   const workoutsByDay = useMemo(() => {
@@ -85,7 +89,11 @@ export function WorkoutCalendar({
           month={month}
           onMonthChange={setMonth}
           selected={selected}
-          onSelect={(day) => day && setSelected(day)}
+          onSelect={(day) => {
+            if (!day) return;
+            setSelected(day);
+            onSelectedDateChange?.(format(day, 'yyyy-MM-dd'));
+          }}
           showOutsideDays
           weekStartsOn={1}
           modifiers={{ workout: workoutDates }}

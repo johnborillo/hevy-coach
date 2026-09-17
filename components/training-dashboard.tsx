@@ -1,15 +1,8 @@
 'use client';
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type SyntheticEvent,
-} from 'react';
+import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
 import {
   Activity,
-  ArrowRight,
   BarChart3,
   CalendarDays,
   Check,
@@ -61,10 +54,10 @@ import type {
   ChatMessage,
   ConversationSummary,
   TrainingProgram,
+  WeightUnit,
 } from '@/lib/storage';
 
 type View = 'today' | 'progress' | 'history' | 'coach' | 'program' | 'profile';
-type Unit = 'kg' | 'lb';
 
 const NAV_ITEMS = [
   { id: 'today' as const, label: 'Today', icon: Activity },
@@ -81,6 +74,8 @@ const EMPTY_PROFILE: AthleteProfile = {
   age: null,
   heightCm: null,
   weightKg: null,
+  weightUnit: 'lb',
+  heightUnit: 'imperial',
   experience: 'intermediate',
   primaryGoal: 'Build muscle and strength',
   targetDate: '',
@@ -104,19 +99,34 @@ async function readJson<T>(response: Response) {
   return response.json() as Promise<T>;
 }
 
-function toDisplayKg(value: number, unit: Unit) {
+function toDisplayWeight(value: number, unit: WeightUnit) {
   return unit === 'kg' ? value : value * 2.20462;
 }
 
-function weight(value: number, unit: Unit, digits = 1) {
-  return `${toDisplayKg(value, unit).toLocaleString(undefined, { maximumFractionDigits: digits })} ${unit}`;
+function weight(value: number, unit: WeightUnit, digits = 1) {
+  return `${toDisplayWeight(value, unit).toLocaleString(undefined, { maximumFractionDigits: digits })} ${unit}`;
 }
 
-function volume(value: number, unit: Unit) {
-  const converted = toDisplayKg(value, unit);
+function volume(value: number, unit: WeightUnit) {
+  const converted = toDisplayWeight(value, unit);
   return converted >= 1000
     ? `${(converted / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })}k ${unit}`
     : `${Math.round(converted).toLocaleString()} ${unit}`;
+}
+
+function imperialHeight(heightCm: number | null) {
+  if (!heightCm) return { feet: '', inches: '' };
+  const totalInches = Math.round(heightCm / 2.54);
+  return {
+    feet: String(Math.floor(totalInches / 12)),
+    inches: String(totalInches % 12),
+  };
+}
+
+function heightFromImperial(feet: string, inches: string) {
+  if (!feet && !inches) return null;
+  const totalInches = (Number(feet) || 0) * 12 + (Number(inches) || 0);
+  return totalInches > 0 ? Math.round(totalInches * 2.54 * 100) / 100 : null;
 }
 
 function delta(value: number) {
@@ -168,9 +178,6 @@ function EmptyMessage({ title, body }: { title: string; body: string }) {
 
 export function TrainingDashboard({ data }: { data: DashboardData }) {
   const [view, setView] = useState<View>('today');
-  const [unit, setUnit] = useState<Unit>('kg');
-  const [duration, setDuration] = useState('40');
-  const [focus, setFocus] = useState('upper');
   const [selectedTrend, setSelectedTrend] = useState(
     data.strengthTrends[0]?.exercise ?? data.trend.exercise,
   );
@@ -184,7 +191,10 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
   const [chatError, setChatError] = useState('');
-  const [animatingMessageId, setAnimatingMessageId] = useState<string | null>(null);
+  const [animatingMessageId, setAnimatingMessageId] = useState<string | null>(
+    null,
+  );
+  const [historyDate, setHistoryDate] = useState<string | null>(null);
   const [programs, setPrograms] = useState<TrainingProgram[]>([]);
   const [activeProgram, setActiveProgram] = useState<TrainingProgram | null>(
     null,
@@ -194,7 +204,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   const [programActionBusy, setProgramActionBusy] = useState(false);
   const [programActionError, setProgramActionError] = useState('');
   const [editingProgramId, setEditingProgramId] = useState<string | null>(null);
-  const [adjustingProgramId, setAdjustingProgramId] = useState<string | null>(null);
+  const [adjustingProgramId, setAdjustingProgramId] = useState<string | null>(
+    null,
+  );
   const [programAdjustment, setProgramAdjustment] = useState('');
   const [programForm, setProgramForm] = useState({
     goal: 'Build muscle and strength',
@@ -204,48 +216,25 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     preferences: '',
   });
   const chatEnd = useRef<HTMLDivElement>(null);
+  const unit = profile.weightUnit;
+  const profileHeight = imperialHeight(profile.heightCm);
 
   const selectedStrength =
     data.strengthTrends.find((item) => item.exercise === selectedTrend) ??
     data.strengthTrends[0];
   const displayTrend = (selectedStrength?.points ?? data.trend.points).map(
-    (point) => ({ ...point, displayValue: toDisplayKg(point.value, unit) }),
+    (point) => ({ ...point, displayValue: toDisplayWeight(point.value, unit) }),
   );
   const workload = data.workloadWeeks.map((week) => ({
     ...week,
-    displayVolume: Math.round(toDisplayKg(week.volumeKg, unit)),
+    displayVolume: Math.round(toDisplayWeight(week.volumeKg, unit)),
   }));
-  const plan = useMemo(() => {
-    const limit = duration === '25' ? 3 : duration === '40' ? 4 : 6;
-    const upperMuscles = [
-      'Chest',
-      'Upper Back',
-      'Lats',
-      'Shoulders',
-      'Biceps',
-      'Triceps',
-    ];
-    const filtered =
-      focus === 'upper'
-        ? data.exerciseOptions.filter((item) =>
-            upperMuscles.includes(item.muscle),
-          )
-        : data.exerciseOptions;
-    return (filtered.length >= limit ? filtered : data.exerciseOptions).slice(
-      0,
-      limit,
-    );
-  }, [data.exerciseOptions, duration, focus]);
   const maxMuscleSets = Math.max(
     ...data.muscles.map((muscle) => muscle.sets),
     1,
   );
 
   useEffect(() => {
-    const savedUnit = window.localStorage.getItem('hevy-coach-unit');
-    if (savedUnit === 'lb' || savedUnit === 'kg') {
-      window.setTimeout(() => setUnit(savedUnit), 0);
-    }
     void Promise.all([
       fetch('/api/profile').then((response) =>
         response.ok ? readJson<{ profile: AthleteProfile }>(response) : null,
@@ -337,11 +326,6 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     ).catch(() => undefined);
     return () => lifecycle.abort();
   }, []);
-
-  function changeUnit(next: Unit) {
-    setUnit(next);
-    window.localStorage.setItem('hevy-coach-unit', next);
-  }
 
   async function createChat() {
     setChatError('');
@@ -536,7 +520,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
       setEditingProgramId(null);
     } catch (error) {
       setProgramActionError(
-        error instanceof Error ? error.message : 'The program could not be saved.',
+        error instanceof Error
+          ? error.message
+          : 'The program could not be saved.',
       );
     } finally {
       setProgramActionBusy(false);
@@ -544,7 +530,8 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   }
 
   async function adjustProgram() {
-    if (!activeProgram || !programAdjustment.trim() || programActionBusy) return;
+    if (!activeProgram || !programAdjustment.trim() || programActionBusy)
+      return;
     setProgramActionBusy(true);
     setProgramActionError('');
     try {
@@ -560,7 +547,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
         response,
       );
       if (!response.ok)
-        throw new Error(payload.error || 'Rowan could not adjust this program.');
+        throw new Error(
+          payload.error || 'Rowan could not adjust this program.',
+        );
       replaceProgram(payload.program);
       setProgramAdjustment('');
       setAdjustingProgramId(null);
@@ -595,7 +584,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
       setProgramAdjustment('');
     } catch (error) {
       setProgramActionError(
-        error instanceof Error ? error.message : 'The program could not be deleted.',
+        error instanceof Error
+          ? error.message
+          : 'The program could not be deleted.',
       );
     } finally {
       setProgramActionBusy(false);
@@ -656,18 +647,6 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
             </h1>
           </div>
           <div className="topbar-actions">
-            <div className="unit-toggle" aria-label="Weight unit">
-              {(['kg', 'lb'] as Unit[]).map((option) => (
-                <button
-                  type="button"
-                  key={option}
-                  aria-pressed={unit === option}
-                  onClick={() => changeUnit(option)}
-                >
-                  {option.toUpperCase()}
-                </button>
-              ))}
-            </div>
             <div className="sync-copy">
               <RefreshCw />
               <span>{data.syncMessage}</span>
@@ -688,84 +667,8 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
 
         {view === 'today' && (
           <>
-            <section className="command-grid">
-              <article className="planner-panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="eyebrow">NEXT BEST SESSION</p>
-                    <h2>Fit the work to the day.</h2>
-                  </div>
-                  <Sparkles className="signal-icon" />
-                </div>
-                <div className="planner-controls">
-                  <fieldset>
-                    <legend>Time available</legend>
-                    <div className="duration-group">
-                      {['25', '40', '60'].map((option) => (
-                        <button
-                          key={option}
-                          type="button"
-                          aria-pressed={duration === option}
-                          onClick={() => setDuration(option)}
-                        >
-                          {option} min
-                        </button>
-                      ))}
-                    </div>
-                  </fieldset>
-                  <div className="focus-field">
-                    <span>Focus</span>
-                    <Select
-                      value={focus}
-                      onValueChange={(value) => value && setFocus(value)}
-                    >
-                      <SelectTrigger aria-label="Workout focus">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="upper">Upper body</SelectItem>
-                        <SelectItem value="full">Full body</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="plan-list">
-                  {plan.map((exercise, index) => (
-                    <div className="plan-row" key={exercise.name}>
-                      <span className="plan-index">
-                        {String(index + 1).padStart(2, '0')}
-                      </span>
-                      <div>
-                        <strong>{exercise.name}</strong>
-                        <small>
-                          {exercise.muscle} · {exercise.note}
-                        </small>
-                      </div>
-                      <span className="prescription">
-                        {exercise.sets} × {exercise.reps ?? '6–12'}
-                        {exercise.weightKg
-                          ? ` @ ${weight(exercise.weightKg, unit)}`
-                          : ''}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <div className="planner-actions">
-                  <Button
-                    onClick={() => {
-                      setView('coach');
-                      setChatInput(
-                        `Build me a ${duration}-minute ${focus} session based on what I have trained this week.`,
-                      );
-                    }}
-                  >
-                    Ask coach to refine <ArrowRight />
-                  </Button>
-                  <span>Draft only. Nothing is written to Hevy.</span>
-                </div>
-              </article>
-
-              <article className="review-panel">
+            <section className="today-review-grid">
+              <article className="review-panel today-review-panel">
                 <div className="panel-heading compact">
                   <div>
                     <p className="eyebrow">
@@ -993,6 +896,11 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                         dataKey="displayValue"
                         stroke="var(--signal-deep)"
                         strokeWidth={3}
+                        dot={{
+                          r: 3,
+                          fill: 'var(--signal-deep)',
+                          strokeWidth: 0,
+                        }}
                         fill="url(#strengthFill)"
                       />
                     </AreaChart>
@@ -1128,7 +1036,13 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
         )}
 
         {view === 'history' && (
-          <WorkoutCalendar workouts={data.calendarWorkouts} unit={unit} />
+          <WorkoutCalendar
+            key={historyDate ?? 'latest-workout'}
+            workouts={data.calendarWorkouts}
+            unit={unit}
+            initialDate={historyDate}
+            onSelectedDateChange={setHistoryDate}
+          />
         )}
 
         {view === 'coach' && (
@@ -1205,7 +1119,17 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                           <CoachMessage
                             content={message.content}
                             animate={message.id === animatingMessageId}
-                            onComplete={() => setAnimatingMessageId((current) => current === message.id ? null : current)}
+                            data={data}
+                            unit={unit}
+                            onOpenWorkout={(date) => {
+                              setHistoryDate(date);
+                              setView('history');
+                            }}
+                            onComplete={() =>
+                              setAnimatingMessageId((current) =>
+                                current === message.id ? null : current,
+                              )
+                            }
                           />
                         ) : (
                           <p>{message.content}</p>
@@ -1448,7 +1372,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                             onClick={() => {
                               setProgramActionError('');
                               setAdjustingProgramId((current) =>
-                                current === activeProgram.id ? null : activeProgram.id,
+                                current === activeProgram.id
+                                  ? null
+                                  : activeProgram.id,
                               );
                               setProgramAdjustment('');
                             }}
@@ -1493,9 +1419,13 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                           <Button
                             type="submit"
                             size="sm"
-                            disabled={programActionBusy || !programAdjustment.trim()}
+                            disabled={
+                              programActionBusy || !programAdjustment.trim()
+                            }
                           >
-                            {programActionBusy ? 'Rowan is revising…' : 'Apply adjustment'}
+                            {programActionBusy
+                              ? 'Rowan is revising…'
+                              : 'Apply adjustment'}
                             <Sparkles />
                           </Button>
                           <Button
@@ -1557,7 +1487,8 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     </div>
                     <p className="draft-note">
                       This is a planning draft. Review exercise suitability and
-                      technique before training; nothing has been written to Hevy.
+                      technique before training; nothing has been written to
+                      Hevy.
                     </p>
                   </>
                 )
@@ -1596,6 +1527,13 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 <div>
                   <span>Experience</span>
                   <strong>{profile.experience}</strong>
+                </div>
+                <div>
+                  <span>Measurements</span>
+                  <strong>
+                    {profile.weightUnit.toUpperCase()} ·{' '}
+                    {profile.heightUnit === 'imperial' ? 'ft / in' : 'cm'}
+                  </strong>
                 </div>
               </div>
             </article>
@@ -1640,6 +1578,39 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     </select>
                   </label>
                   <label>
+                    <span>Weight display</span>
+                    <select
+                      value={profile.weightUnit}
+                      onChange={(event) =>
+                        setProfile({
+                          ...profile,
+                          weightUnit: event.target.value as WeightUnit,
+                        })
+                      }
+                    >
+                      <option value="lb">Pounds (lb)</option>
+                      <option value="kg">Kilograms (kg)</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Height display</span>
+                    <select
+                      value={profile.heightUnit}
+                      onChange={(event) =>
+                        setProfile({
+                          ...profile,
+                          heightUnit:
+                            event.target.value === 'metric'
+                              ? 'metric'
+                              : 'imperial',
+                        })
+                      }
+                    >
+                      <option value="imperial">Feet & inches</option>
+                      <option value="metric">Centimetres (cm)</option>
+                    </select>
+                  </label>
+                  <label>
                     <span>Age</span>
                     <input
                       type="number"
@@ -1656,33 +1627,83 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                       }
                     />
                   </label>
-                  <label>
-                    <span>Height (cm)</span>
-                    <input
-                      type="number"
-                      min="100"
-                      max="250"
-                      value={profile.heightCm ?? ''}
-                      onChange={(event) =>
-                        setProfile({
-                          ...profile,
-                          heightCm: event.target.value
-                            ? Number(event.target.value)
-                            : null,
-                        })
-                      }
-                    />
-                  </label>
+                  {profile.heightUnit === 'metric' ? (
+                    <label>
+                      <span>Height (cm)</span>
+                      <input
+                        type="number"
+                        min="100"
+                        max="250"
+                        step="0.1"
+                        value={profile.heightCm ?? ''}
+                        onChange={(event) =>
+                          setProfile({
+                            ...profile,
+                            heightCm: event.target.value
+                              ? Number(event.target.value)
+                              : null,
+                          })
+                        }
+                      />
+                    </label>
+                  ) : (
+                    <div className="profile-field">
+                      <span>Height (ft / in)</span>
+                      <div className="height-inputs">
+                        <div>
+                          <input
+                            type="number"
+                            min="3"
+                            max="8"
+                            inputMode="numeric"
+                            aria-label="Height in feet"
+                            value={profileHeight.feet}
+                            onChange={(event) =>
+                              setProfile({
+                                ...profile,
+                                heightCm: heightFromImperial(
+                                  event.target.value,
+                                  profileHeight.inches,
+                                ),
+                              })
+                            }
+                          />
+                          <span>ft</span>
+                        </div>
+                        <div>
+                          <input
+                            type="number"
+                            min="0"
+                            max="11"
+                            inputMode="numeric"
+                            aria-label="Height in inches"
+                            value={profileHeight.inches}
+                            onChange={(event) =>
+                              setProfile({
+                                ...profile,
+                                heightCm: heightFromImperial(
+                                  profileHeight.feet,
+                                  event.target.value,
+                                ),
+                              })
+                            }
+                          />
+                          <span>in</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <label>
                     <span>Body weight ({unit})</span>
                     <input
                       type="number"
-                      min="30"
+                      min={unit === 'lb' ? 66 : 30}
+                      max={unit === 'lb' ? 772 : 350}
                       step="0.1"
                       value={
                         profile.weightKg
                           ? Math.round(
-                              toDisplayKg(profile.weightKg, unit) * 10,
+                              toDisplayWeight(profile.weightKg, unit) * 10,
                             ) / 10
                           : ''
                       }
@@ -1843,4 +1864,3 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     </div>
   );
 }
-
