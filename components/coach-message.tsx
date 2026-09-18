@@ -8,19 +8,19 @@ import remarkGfm from "remark-gfm";
 import type { CalendarWorkout, DashboardData } from "@/lib/hevy";
 import type { WeightUnit } from "@/lib/storage";
 
-type WorkoutSource = {
+export type WorkoutSource = {
   kind: "workout";
   id: string;
   date: string;
   exercise: string;
 };
 
-type SummarySource = {
+export type SummarySource = {
   kind: "summary";
   field: string;
 };
 
-type CoachSource = WorkoutSource | SummarySource;
+export type CoachSource = WorkoutSource | SummarySource;
 
 const SUMMARY_LABELS: Record<string, string> = {
   stats: "Training summary",
@@ -297,7 +297,7 @@ function SummaryDetails({ field, data, unit }: { field: string; data: DashboardD
   return <p className="coach-source-copy">This summary field is part of Rowan’s synchronized training context.</p>;
 }
 
-function SourcePanel({ source, data, unit, onOpenWorkout, onClose }: { source: CoachSource; data: DashboardData; unit: WeightUnit; onOpenWorkout?: (date: string) => void; onClose: () => void }) {
+export function CoachSourcePanel({ source, data, unit, onOpenWorkout, onClose }: { source: CoachSource; data: DashboardData; unit: WeightUnit; onOpenWorkout?: (date: string) => void; onClose: () => void }) {
   if (source.kind === "summary") {
     const normalized = normalizeField(source.field);
     return (
@@ -364,9 +364,8 @@ function SourcePanel({ source, data, unit, onOpenWorkout, onClose }: { source: C
   );
 }
 
-export function CoachMessage({ content, animate = false, data, unit, onOpenWorkout, onComplete }: { content: string; animate?: boolean; data: DashboardData; unit: WeightUnit; onOpenWorkout?: (date: string) => void; onComplete?: () => void }) {
+export function CoachMessage({ content, animate = false, activeSource, onSourceChange, onComplete }: { content: string; animate?: boolean; activeSource: CoachSource | null; onSourceChange: (source: CoachSource | null) => void; onComplete?: () => void }) {
   const [visible, setVisible] = useState(animate ? "" : content);
-  const [activeSource, setActiveSource] = useState<CoachSource | null>(null);
 
   useEffect(() => {
     if (!animate || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -403,7 +402,7 @@ export function CoachMessage({ content, animate = false, data, unit, onOpenWorko
             if (source) {
               const selected = activeSource && sourceKey(activeSource) === sourceKey(source);
               return (
-                <button type="button" className="coach-source-chip" aria-expanded={Boolean(selected)} onClick={() => setActiveSource(selected ? null : source)}>
+                <button type="button" className="coach-source-chip" aria-expanded={Boolean(selected)} onClick={() => onSourceChange(selected ? null : source)}>
                   <Database /> {children}
                 </button>
               );
@@ -420,7 +419,6 @@ export function CoachMessage({ content, animate = false, data, unit, onOpenWorko
         {renderedContent}
       </ReactMarkdown>
       {revealing && <span className="response-cursor" aria-hidden="true" />}
-      {activeSource && <SourcePanel source={activeSource} data={data} unit={unit} onOpenWorkout={onOpenWorkout} onClose={() => setActiveSource(null)} />}
     </div>
   );
 }

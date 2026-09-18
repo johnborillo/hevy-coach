@@ -1,8 +1,17 @@
 'use client';
 
-import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type SyntheticEvent,
+} from 'react';
 import {
   Activity,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   BarChart3,
   CalendarDays,
   Check,
@@ -15,6 +24,7 @@ import {
   Gauge,
   Medal,
   MessageSquareText,
+  Pin,
   Plus,
   RefreshCw,
   Send,
@@ -38,7 +48,11 @@ import {
 } from 'recharts';
 
 import { Button } from '@/components/ui/button';
-import { CoachMessage } from '@/components/coach-message';
+import {
+  CoachMessage,
+  CoachSourcePanel,
+  type CoachSource,
+} from '@/components/coach-message';
 import { ProgramEditor } from '@/components/program-editor';
 import { WorkoutCalendar } from '@/components/workout-calendar';
 import {
@@ -48,7 +62,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { DashboardData } from '@/lib/hevy';
+import type { DashboardData, MuscleWindow } from '@/lib/hevy';
 import type {
   AthleteProfile,
   ChatMessage,
@@ -58,6 +72,14 @@ import type {
 } from '@/lib/storage';
 
 type View = 'today' | 'progress' | 'history' | 'coach' | 'program' | 'profile';
+type LedgerSortKey =
+  | 'exercise'
+  | 'sessions'
+  | 'sets'
+  | 'volume'
+  | 'bestE1rm'
+  | 'trend';
+type SortDirection = 'asc' | 'desc';
 
 const NAV_ITEMS = [
   { id: 'today' as const, label: 'Today', icon: Activity },
@@ -133,6 +155,43 @@ function delta(value: number) {
   return `${value >= 0 ? '+' : ''}${value}%`;
 }
 
+function orderConversations(items: ConversationSummary[]) {
+  return [...items].sort(
+    (a, b) =>
+      Number(b.pinned) - Number(a.pinned) ||
+      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+  );
+}
+
+function SortableHeading({
+  label,
+  sortKey,
+  activeKey,
+  direction,
+  onSort,
+}: {
+  label: string;
+  sortKey: LedgerSortKey;
+  activeKey: LedgerSortKey;
+  direction: SortDirection;
+  onSort: (key: LedgerSortKey) => void;
+}) {
+  const active = activeKey === sortKey;
+  const Icon = active
+    ? direction === 'asc'
+      ? ArrowUp
+      : ArrowDown
+    : ArrowUpDown;
+
+  return (
+    <th aria-sort={active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'}>
+      <button type="button" onClick={() => onSort(sortKey)}>
+        {label} <Icon aria-hidden="true" />
+      </button>
+    </th>
+  );
+}
+
 function StatCard({
   label,
   value,
@@ -194,7 +253,13 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   const [animatingMessageId, setAnimatingMessageId] = useState<string | null>(
     null,
   );
+  const [coachSource, setCoachSource] = useState<CoachSource | null>(null);
   const [historyDate, setHistoryDate] = useState<string | null>(null);
+  const [muscleWindow, setMuscleWindow] = useState<MuscleWindow>('7');
+  const [ledgerSort, setLedgerSort] = useState<{
+    key: LedgerSortKey;
+    direction: SortDirection;
+  }>({ key: 'sessions', direction: 'desc' });
   const [programs, setPrograms] = useState<TrainingProgram[]>([]);
   const [activeProgram, setActiveProgram] = useState<TrainingProgram | null>(
     null,
@@ -229,10 +294,69 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     ...week,
     displayVolume: Math.round(toDisplayWeight(week.volumeKg, unit)),
   }));
+  const alphabetizedStrengthTrends = useMemo(
+    () =>
+      [...data.strengthTrends].sort((a, b) =>
+        a.exercise.localeCompare(b.exercise, undefined, {
+          sensitivity: 'base',
+        }),
+      ),
+    [data.strengthTrends],
+  );
+  const muscleDistribution = data.muscleWindows[muscleWindow];
   const maxMuscleSets = Math.max(
-    ...data.muscles.map((muscle) => muscle.sets),
+    ...muscleDistribution.map((muscle) => muscle.sets),
     1,
   );
+  const sortedExerciseStats = useMemo(() => {
+    const valueFor = (
+      exercise: DashboardData['exerciseStats'][number],
+      key: LedgerSortKey,
+    ) => {
+      switch (key) {
+        case 'exercise':
+          return exercise.exercise;
+        case 'sessions':
+          return exercise.sessions;
+        case 'sets':
+          return exercise.workingSets;
+        case 'volume':
+          return exercise.volumeKg;
+        case 'bestE1rm':
+          return exercise.bestE1rmKg;
+        case 'trend':
+          return exercise.change;
+      }
+    };
+
+    return [...data.exerciseStats].sort((a, b) => {
+      const aValue = valueFor(a, ledgerSort.key);
+      const bValue = valueFor(b, ledgerSort.key);
+      const comparison =
+        typeof aValue === 'string' && typeof bValue === 'string'
+          ? aValue.localeCompare(bValue, undefined, { sensitivity: 'base' })
+          : Number(aValue) - Number(bValue);
+      const directed = ledgerSort.direction === 'asc' ? comparison : -comparison;
+      return (
+        directed ||
+        a.exercise.localeCompare(b.exercise, undefined, { sensitivity: 'base' })
+      );
+    });
+  }, [data.exerciseStats, ledgerSort]);
+
+  function changeLedgerSort(key: LedgerSortKey) {
+    setLedgerSort((current) => ({
+      key,
+      direction:
+        current.key === key
+          ? current.direction === 'asc'
+            ? 'desc'
+            : 'asc'
+          : key === 'exercise'
+            ? 'asc'
+            : 'desc',
+    }));
+  }
 
   useEffect(() => {
     void Promise.all([
@@ -260,7 +384,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
         }));
       }
       if (conversationPayload?.conversations)
-        setConversations(conversationPayload.conversations);
+        setConversations(orderConversations(conversationPayload.conversations));
       if (programPayload?.programs) {
         setPrograms(programPayload.programs);
         setActiveProgram(programPayload.programs[0] ?? null);
@@ -339,16 +463,20 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     >(response);
     if (!response.ok)
       return setChatError(payload.error || 'Could not create a chat.');
-    setConversations((current) => [payload.conversation, ...current]);
+    setConversations((current) =>
+      orderConversations([payload.conversation, ...current]),
+    );
     setActiveConversation(payload.conversation.id);
     setMessages([]);
     setAnimatingMessageId(null);
+    setCoachSource(null);
   }
 
   async function openChat(id: string) {
     setActiveConversation(id);
     setChatError('');
     setAnimatingMessageId(null);
+    setCoachSource(null);
     const response = await fetch(
       `/api/messages?conversationId=${encodeURIComponent(id)}`,
     );
@@ -371,6 +499,30 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
       setActiveConversation(null);
       setMessages([]);
       setAnimatingMessageId(null);
+      setCoachSource(null);
+    }
+  }
+
+  async function toggleConversationPin(conversation: ConversationSummary) {
+    const pinned = !conversation.pinned;
+    const previous = conversations;
+    setChatError('');
+    setConversations((current) =>
+      orderConversations(
+        current.map((item) =>
+          item.id === conversation.id ? { ...item, pinned } : item,
+        ),
+      ),
+    );
+
+    const response = await fetch('/api/conversations', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: conversation.id, pinned }),
+    });
+    if (!response.ok) {
+      setConversations(previous);
+      setChatError('Could not update the chat pin.');
     }
   }
 
@@ -392,7 +544,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
         return setChatError(payload.error || 'Could not create a chat.');
       conversationId = payload.conversation.id;
       setActiveConversation(conversationId);
-      setConversations((current) => [payload.conversation, ...current]);
+      setConversations((current) =>
+        orderConversations([payload.conversation, ...current]),
+      );
     }
     setChatInput('');
     setChatBusy(true);
@@ -427,7 +581,8 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
       const refreshed = await fetch('/api/conversations').then((result) =>
         readJson<{ conversations: ConversationSummary[] }>(result),
       );
-      if (refreshed.conversations) setConversations(refreshed.conversations);
+      if (refreshed.conversations)
+        setConversations(orderConversations(refreshed.conversations));
     } catch (error) {
       setChatError(
         error instanceof Error ? error.message : 'The coach could not answer.',
@@ -847,7 +1002,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {data.strengthTrends.map((item) => (
+                      {alphabetizedStrengthTrends.map((item) => (
                         <SelectItem key={item.exercise} value={item.exercise}>
                           {item.exercise}
                         </SelectItem>
@@ -928,7 +1083,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                           <strong>{record.exercise}</strong>
                           <small>
                             {record.weightKg
-                              ? `${weight(record.weightKg, unit)} × ${record.reps}`
+                              ? `${weight(record.weightKg, unit)} × ${record.reps} · ${record.date}`
                               : record.date}
                           </small>
                         </div>
@@ -948,13 +1103,29 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
               <article className="muscle-panel">
                 <div className="panel-heading compact">
                   <div>
-                    <p className="eyebrow">MUSCLE DISTRIBUTION / 7D</p>
+                    <p className="eyebrow">
+                      MUSCLE DISTRIBUTION / {muscleWindow}D
+                    </p>
                     <h2>Direct working sets</h2>
                   </div>
-                  <Gauge />
+                  <div
+                    className="muscle-window-picker"
+                    aria-label="Muscle distribution date range"
+                  >
+                    {(['7', '14', '30'] as MuscleWindow[]).map((range) => (
+                      <button
+                        type="button"
+                        key={range}
+                        aria-pressed={muscleWindow === range}
+                        onClick={() => setMuscleWindow(range)}
+                      >
+                        {range}D
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="muscle-bars">
-                  {data.muscles.map((muscle) => (
+                  {muscleDistribution.map((muscle) => (
                     <div className="muscle-row" key={muscle.name}>
                       <div>
                         <span>{muscle.name}</span>
@@ -962,7 +1133,8 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                           <strong>{muscle.sets}</strong>
                           <small>
                             {muscle.sets - muscle.previousSets >= 0 ? '+' : ''}
-                            {muscle.sets - muscle.previousSets} vs prior
+                            {muscle.sets - muscle.previousSets} vs prior{' '}
+                            {muscleWindow}d
                           </small>
                         </span>
                       </div>
@@ -989,16 +1161,52 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                   <table>
                     <thead>
                       <tr>
-                        <th>Exercise</th>
-                        <th>Sessions</th>
-                        <th>Sets</th>
-                        <th>Volume</th>
-                        <th>Best e1RM</th>
-                        <th>Trend</th>
+                        <SortableHeading
+                          label="Exercise"
+                          sortKey="exercise"
+                          activeKey={ledgerSort.key}
+                          direction={ledgerSort.direction}
+                          onSort={changeLedgerSort}
+                        />
+                        <SortableHeading
+                          label="Sessions"
+                          sortKey="sessions"
+                          activeKey={ledgerSort.key}
+                          direction={ledgerSort.direction}
+                          onSort={changeLedgerSort}
+                        />
+                        <SortableHeading
+                          label="Sets"
+                          sortKey="sets"
+                          activeKey={ledgerSort.key}
+                          direction={ledgerSort.direction}
+                          onSort={changeLedgerSort}
+                        />
+                        <SortableHeading
+                          label="Volume"
+                          sortKey="volume"
+                          activeKey={ledgerSort.key}
+                          direction={ledgerSort.direction}
+                          onSort={changeLedgerSort}
+                        />
+                        <SortableHeading
+                          label="Best e1RM"
+                          sortKey="bestE1rm"
+                          activeKey={ledgerSort.key}
+                          direction={ledgerSort.direction}
+                          onSort={changeLedgerSort}
+                        />
+                        <SortableHeading
+                          label="Trend"
+                          sortKey="trend"
+                          activeKey={ledgerSort.key}
+                          direction={ledgerSort.direction}
+                          onSort={changeLedgerSort}
+                        />
                       </tr>
                     </thead>
                     <tbody>
-                      {data.exerciseStats.map((exercise) => (
+                      {sortedExerciseStats.map((exercise) => (
                         <tr key={exercise.exercise}>
                           <td>
                             <strong>{exercise.exercise}</strong>
@@ -1046,7 +1254,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
         )}
 
         {view === 'coach' && (
-          <section className="chat-workspace">
+          <section
+            className={`chat-workspace${coachSource ? ' source-open' : ''}`}
+          >
             <aside className="chat-sidebar">
               <Button className="new-chat" onClick={createChat}>
                 <Plus /> New chat
@@ -1056,9 +1266,13 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 {conversations.map((conversation) => (
                   <div
                     className={
-                      activeConversation === conversation.id
-                        ? 'conversation-row active'
-                        : 'conversation-row'
+                      [
+                        'conversation-row',
+                        activeConversation === conversation.id ? 'active' : '',
+                        conversation.pinned ? 'pinned' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')
                     }
                     key={conversation.id}
                   >
@@ -1069,14 +1283,26 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                       <strong>{conversation.title}</strong>
                       <small>{conversation.preview || 'No messages yet'}</small>
                     </button>
-                    <button
-                      type="button"
-                      className="delete-chat"
-                      onClick={() => deleteChat(conversation.id)}
-                      aria-label={`Delete ${conversation.title}`}
-                    >
-                      <Trash2 />
-                    </button>
+                    <div className="conversation-actions">
+                      <button
+                        type="button"
+                        className={`pin-chat${conversation.pinned ? ' active' : ''}`}
+                        onClick={() => toggleConversationPin(conversation)}
+                        aria-label={`${conversation.pinned ? 'Unpin' : 'Pin'} ${conversation.title}`}
+                        title={conversation.pinned ? 'Unpin chat' : 'Pin chat'}
+                      >
+                        <Pin />
+                      </button>
+                      <button
+                        type="button"
+                        className="delete-chat"
+                        onClick={() => deleteChat(conversation.id)}
+                        aria-label={`Delete ${conversation.title}`}
+                        title="Delete chat"
+                      >
+                        <Trash2 />
+                      </button>
+                    </div>
                   </div>
                 ))}
                 {!conversations.length && (
@@ -1119,12 +1345,8 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                           <CoachMessage
                             content={message.content}
                             animate={message.id === animatingMessageId}
-                            data={data}
-                            unit={unit}
-                            onOpenWorkout={(date) => {
-                              setHistoryDate(date);
-                              setView('history');
-                            }}
+                            activeSource={coachSource}
+                            onSourceChange={setCoachSource}
                             onComplete={() =>
                               setAnimatingMessageId((current) =>
                                 current === message.id ? null : current,
@@ -1205,6 +1427,21 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 {chatError && <p className="form-error">{chatError}</p>}
               </form>
             </div>
+            {coachSource && (
+              <div className="coach-source-drawer">
+                <CoachSourcePanel
+                  source={coachSource}
+                  data={data}
+                  unit={unit}
+                  onClose={() => setCoachSource(null)}
+                  onOpenWorkout={(date) => {
+                    setCoachSource(null);
+                    setHistoryDate(date);
+                    setView('history');
+                  }}
+                />
+              </div>
+            )}
           </section>
         )}
 

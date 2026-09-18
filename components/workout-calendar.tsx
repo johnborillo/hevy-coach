@@ -95,7 +95,7 @@ export function WorkoutCalendar({
             onSelectedDateChange?.(format(day, 'yyyy-MM-dd'));
           }}
           showOutsideDays
-          weekStartsOn={1}
+          weekStartsOn={0}
           modifiers={{ workout: workoutDates }}
           modifiersClassNames={{ workout: 'workout-day' }}
           aria-label="Workout history calendar"

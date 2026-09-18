@@ -34,6 +34,7 @@ export const conversations = sqliteTable(
     id: text('id').primaryKey(),
     userId: text('user_id').notNull(),
     title: text('title').notNull(),
+    pinned: integer('pinned').notNull().default(0),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
   },

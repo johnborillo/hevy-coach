@@ -24,6 +24,7 @@ export type AthleteProfile = {
 export type ConversationSummary = {
   id: string;
   title: string;
+  pinned: boolean;
   createdAt: string;
   updatedAt: string;
   preview: string;
@@ -191,17 +192,18 @@ export async function saveProfile(userId: string, profile: AthleteProfile) {
 export async function listConversations(userId: string) {
   const result = await getDatabase()
     .prepare(
-      `SELECT c.id, c.title, c.created_at, c.updated_at,
+      `SELECT c.id, c.title, c.pinned, c.created_at, c.updated_at,
         COALESCE((SELECT content FROM messages m
           WHERE m.conversation_id = c.id
           ORDER BY m.created_at DESC LIMIT 1), '') AS preview
        FROM conversations c WHERE c.user_id = ?
-       ORDER BY c.updated_at DESC LIMIT 50`,
+       ORDER BY c.pinned DESC, c.updated_at DESC LIMIT 50`,
     )
     .bind(userId)
     .all<{
       id: string;
       title: string;
+      pinned: number;
       created_at: string;
       updated_at: string;
       preview: string;
@@ -210,6 +212,7 @@ export async function listConversations(userId: string) {
   return result.results.map((row) => ({
     id: row.id,
     title: row.title,
+    pinned: Boolean(row.pinned),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     preview: row.preview,
@@ -228,7 +231,20 @@ export async function createConversation(
     )
     .bind(id, userId, title, now, now)
     .run();
-  return { id, title, createdAt: now, updatedAt: now, preview: '' };
+  return { id, title, pinned: false, createdAt: now, updatedAt: now, preview: '' };
+}
+
+export async function setConversationPinned(
+  userId: string,
+  id: string,
+  pinned: boolean,
+) {
+  await getDatabase()
+    .prepare(
+      'UPDATE conversations SET pinned = ? WHERE id = ? AND user_id = ?',
+    )
+    .bind(pinned ? 1 : 0, id, userId)
+    .run();
 }
 
 export async function deleteConversation(userId: string, id: string) {
