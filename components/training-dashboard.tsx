@@ -22,6 +22,7 @@ import {
   Dumbbell,
   Flame,
   Gauge,
+  CircleHelp,
   Medal,
   MessageSquareText,
   Pin,
@@ -35,6 +36,7 @@ import {
   TrendingUp,
   Trophy,
 } from 'lucide-react';
+import { Tooltip as BaseTooltip } from '@base-ui/react/tooltip';
 import {
   Area,
   AreaChart,
@@ -42,7 +44,7 @@ import {
   BarChart,
   CartesianGrid,
   ResponsiveContainer,
-  Tooltip,
+  Tooltip as ChartTooltip,
   XAxis,
   YAxis,
 } from 'recharts';
@@ -114,6 +116,25 @@ const STARTERS = [
   'Give me my weekly coaching review.',
   'How should I return after three weeks off?',
 ];
+
+const PROGRESS_HELP = {
+  workingSets:
+    'The total number of non-warm-up sets logged in the most recent 7 days. It measures recent training volume; it does not grade how hard each set was.',
+  primaryLiftTrend:
+    'The change from the first to the latest estimated one-rep max across up to eight logged sessions for the exercise selected below. Use it as a direction-of-travel signal, not a tested max.',
+  recentEstimatedPrs:
+    'How many exercises appear on the board below, up to five. Each uses that exercise’s strongest estimated one-rep max from the past 30 days.',
+  trainingFrequency:
+    'Your logged Hevy sessions from the past 30 days converted to an average number of workouts per week.',
+  estimatedStrength:
+    'An estimated one-rep max (e1RM) calculated with the Epley formula from the best non-warm-up set of 15 reps or fewer in each session. It helps compare strength over time without testing a true max.',
+  estimatedPrBoard:
+    'Up to five exercises ranked by their best estimated one-rep max from the past 30 days. Each row shows the source set and date. These are calculated estimates, not necessarily tested or all-time personal records.',
+  muscleDistribution:
+    'Non-warm-up sets grouped by each exercise’s primary muscle in the selected time window. The comparison uses the immediately preceding window of the same length.',
+  exercisePerformance:
+    'A movement-by-movement summary of your synchronized Hevy history: sessions, non-warm-up sets, load-volume, best e1RM, and e1RM change across up to six recent comparable sessions.',
+};
 
 type ApiError = { error?: string };
 
@@ -197,21 +218,58 @@ function StatCard({
   value,
   detail,
   icon: Icon,
+  help,
 }: {
   label: string;
   value: string;
   detail: string;
   icon: typeof Activity;
+  help?: string;
 }) {
   return (
     <article className="metric-card">
       <div className="metric-label">
-        <span>{label}</span>
+        <span className="metric-label-copy">
+          <span>{label}</span>
+          {help && <InfoTooltip title={label}>{help}</InfoTooltip>}
+        </span>
         <Icon />
       </div>
       <strong>{value}</strong>
       <small>{detail}</small>
     </article>
+  );
+}
+
+function InfoTooltip({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <BaseTooltip.Root>
+      <BaseTooltip.Trigger
+        className="info-tooltip-trigger"
+        aria-label={`Explain ${title}`}
+        closeOnClick={false}
+      >
+        <CircleHelp aria-hidden="true" />
+      </BaseTooltip.Trigger>
+      <BaseTooltip.Portal>
+        <BaseTooltip.Positioner
+          className="info-tooltip-positioner"
+          sideOffset={9}
+          collisionPadding={12}
+        >
+          <BaseTooltip.Popup className="info-tooltip-popup">
+            <strong>{title}</strong>
+            <span>{children}</span>
+          </BaseTooltip.Popup>
+        </BaseTooltip.Positioner>
+      </BaseTooltip.Portal>
+    </BaseTooltip.Root>
   );
 }
 
@@ -942,7 +1000,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                         axisLine={false}
                       />
                       <YAxis hide />
-                      <Tooltip
+                      <ChartTooltip
                         formatter={(value) => [
                           `${Number(value).toLocaleString()} ${unit}`,
                           'Load-volume',
@@ -990,31 +1048,35 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
         )}
 
         {view === 'progress' && (
-          <>
+          <BaseTooltip.Provider delay={250} closeDelay={80}>
             <section className="metrics-grid progress-metrics">
               <StatCard
-                label="Working sets / 7d"
+                label="Working sets / 7D"
                 value={String(data.stats.workingSets7d)}
                 detail="Warm-ups excluded"
                 icon={Gauge}
+                help={PROGRESS_HELP.workingSets}
               />
               <StatCard
                 label="Primary lift trend"
                 value={delta(selectedStrength?.change ?? data.trend.change)}
                 detail={selectedStrength?.exercise ?? data.trend.exercise}
                 icon={TrendingUp}
+                help={PROGRESS_HELP.primaryLiftTrend}
               />
               <StatCard
                 label="Recent estimated PRs"
                 value={String(data.records.length)}
                 detail="Best e1RM in the last 30 days"
                 icon={Trophy}
+                help={PROGRESS_HELP.recentEstimatedPrs}
               />
               <StatCard
                 label="Training frequency"
                 value={`${data.stats.sessions30d / 4.3 >= 1 ? (data.stats.sessions30d / 4.3).toFixed(1) : data.stats.sessions30d}×`}
                 detail="Average sessions per week"
                 icon={Activity}
+                help={PROGRESS_HELP.trainingFrequency}
               />
             </section>
             <section className="progress-grid">
@@ -1022,7 +1084,14 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 <div className="panel-heading compact">
                   <div>
                     <p className="eyebrow">ESTIMATED STRENGTH</p>
-                    <h2>{selectedStrength?.exercise ?? data.trend.exercise}</h2>
+                    <div className="panel-title-row">
+                      <h2>
+                        {selectedStrength?.exercise ?? data.trend.exercise}
+                      </h2>
+                      <InfoTooltip title="Estimated strength">
+                        {PROGRESS_HELP.estimatedStrength}
+                      </InfoTooltip>
+                    </div>
                   </div>
                   <Select
                     value={selectedTrend}
@@ -1070,7 +1139,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                         axisLine={false}
                       />
                       <YAxis domain={['dataMin - 2', 'dataMax + 2']} hide />
-                      <Tooltip
+                      <ChartTooltip
                         formatter={(value) => [
                           `${Number(value).toFixed(1)} ${unit}`,
                           'Estimated 1RM',
@@ -1100,7 +1169,12 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 <div className="panel-heading compact">
                   <div>
                     <p className="eyebrow">RECENT SIGNALS</p>
-                    <h2>Estimated PR board</h2>
+                    <div className="panel-title-row">
+                      <h2>Estimated PR board</h2>
+                      <InfoTooltip title="Estimated PR board">
+                        {PROGRESS_HELP.estimatedPrBoard}
+                      </InfoTooltip>
+                    </div>
                   </div>
                   <Trophy />
                 </div>
@@ -1136,7 +1210,12 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     <p className="eyebrow">
                       MUSCLE DISTRIBUTION / {muscleWindow}D
                     </p>
-                    <h2>Direct working sets</h2>
+                    <div className="panel-title-row">
+                      <h2>Direct working sets</h2>
+                      <InfoTooltip title="Muscle distribution">
+                        {PROGRESS_HELP.muscleDistribution}
+                      </InfoTooltip>
+                    </div>
                   </div>
                   <div
                     className="muscle-window-picker"
@@ -1183,7 +1262,12 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 <div className="panel-heading compact">
                   <div>
                     <p className="eyebrow">MOVEMENT LEDGER</p>
-                    <h2>Exercise performance</h2>
+                    <div className="panel-title-row">
+                      <h2>Exercise performance</h2>
+                      <InfoTooltip title="Exercise performance">
+                        {PROGRESS_HELP.exercisePerformance}
+                      </InfoTooltip>
+                    </div>
                   </div>
                   <Dumbbell />
                 </div>
@@ -1270,7 +1354,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 </div>
               </article>
             </section>
-          </>
+          </BaseTooltip.Provider>
         )}
 
         {view === 'history' && (
