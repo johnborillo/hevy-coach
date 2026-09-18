@@ -254,6 +254,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     null,
   );
   const [coachSource, setCoachSource] = useState<CoachSource | null>(null);
+  const [sourcePanelOpen, setSourcePanelOpen] = useState(false);
   const [historyDate, setHistoryDate] = useState<string | null>(null);
   const [muscleWindow, setMuscleWindow] = useState<MuscleWindow>('7');
   const [ledgerSort, setLedgerSort] = useState<{
@@ -281,6 +282,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     preferences: '',
   });
   const chatEnd = useRef<HTMLDivElement>(null);
+  const sourceCloseTimer = useRef<number | null>(null);
   const unit = profile.weightUnit;
   const profileHeight = imperialHeight(profile.heightCm);
 
@@ -357,6 +359,34 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
             : 'desc',
     }));
   }
+
+  function changeCoachSource(source: CoachSource | null) {
+    if (sourceCloseTimer.current !== null) {
+      window.clearTimeout(sourceCloseTimer.current);
+      sourceCloseTimer.current = null;
+    }
+
+    if (source) {
+      setCoachSource(source);
+      setSourcePanelOpen(true);
+      return;
+    }
+
+    setSourcePanelOpen(false);
+    sourceCloseTimer.current = window.setTimeout(() => {
+      setCoachSource(null);
+      sourceCloseTimer.current = null;
+    }, 280);
+  }
+
+  useEffect(
+    () => () => {
+      if (sourceCloseTimer.current !== null) {
+        window.clearTimeout(sourceCloseTimer.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     void Promise.all([
@@ -469,14 +499,14 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     setActiveConversation(payload.conversation.id);
     setMessages([]);
     setAnimatingMessageId(null);
-    setCoachSource(null);
+    changeCoachSource(null);
   }
 
   async function openChat(id: string) {
     setActiveConversation(id);
     setChatError('');
     setAnimatingMessageId(null);
-    setCoachSource(null);
+    changeCoachSource(null);
     const response = await fetch(
       `/api/messages?conversationId=${encodeURIComponent(id)}`,
     );
@@ -499,7 +529,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
       setActiveConversation(null);
       setMessages([]);
       setAnimatingMessageId(null);
-      setCoachSource(null);
+      changeCoachSource(null);
     }
   }
 
@@ -1255,7 +1285,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
 
         {view === 'coach' && (
           <section
-            className={`chat-workspace${coachSource ? ' source-open' : ''}`}
+            className={`chat-workspace${sourcePanelOpen ? ' source-open' : ''}`}
           >
             <aside className="chat-sidebar">
               <Button className="new-chat" onClick={createChat}>
@@ -1346,7 +1376,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                             content={message.content}
                             animate={message.id === animatingMessageId}
                             activeSource={coachSource}
-                            onSourceChange={setCoachSource}
+                            onSourceChange={changeCoachSource}
                             onComplete={() =>
                               setAnimatingMessageId((current) =>
                                 current === message.id ? null : current,
@@ -1427,21 +1457,21 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 {chatError && <p className="form-error">{chatError}</p>}
               </form>
             </div>
-            {coachSource && (
-              <div className="coach-source-drawer">
+            <div className="coach-source-drawer">
+              {coachSource && (
                 <CoachSourcePanel
                   source={coachSource}
                   data={data}
                   unit={unit}
-                  onClose={() => setCoachSource(null)}
+                  onClose={() => changeCoachSource(null)}
                   onOpenWorkout={(date) => {
-                    setCoachSource(null);
+                    changeCoachSource(null);
                     setHistoryDate(date);
                     setView('history');
                   }}
                 />
-              </div>
-            )}
+              )}
+            </div>
           </section>
         )}
 
