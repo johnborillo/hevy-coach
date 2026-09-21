@@ -36,6 +36,18 @@ npm start
 
 The generated migration is applied automatically by Sites during production publishing. Run each migration only once per local database.
 
+## Verification
+
+```bash
+npm test
+npm run typecheck
+npm run build
+```
+
+The analysis suite uses deterministic 26-week novice, intermediate, and advanced
+athlete fixtures. Derived metrics carry an analysis-engine version and source
+coverage metadata so future calculation changes can be audited and re-derived.
+
 ## Safety boundaries
 
 Estimated 1RM is treated as a trend signal, not a tested maximum. Coaching guidance is informational and does not diagnose injury or medical conditions. Programs remain drafts, and nothing is written back to Hevy without explicit approval.
