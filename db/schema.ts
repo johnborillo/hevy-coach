@@ -1,6 +1,8 @@
 import {
   index,
   integer,
+  primaryKey,
+  real,
   sqliteTable,
   text,
   uniqueIndex,
@@ -96,3 +98,85 @@ export const weeklyReviews = sqliteTable(
     ),
   ],
 );
+
+export const hevyWorkouts = sqliteTable(
+  'hevy_workouts',
+  {
+    userId: text('user_id').notNull(),
+    id: text('id').notNull(),
+    title: text('title').notNull(),
+    startTime: text('start_time').notNull(),
+    endTime: text('end_time').notNull(),
+    description: text('description'),
+    sourceUpdatedAt: text('source_updated_at'),
+    rawJson: text('raw_json').notNull(),
+    deleted: integer('deleted').notNull().default(0),
+    syncedAt: text('synced_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.id] }),
+    index('idx_hevy_workouts_user_start').on(table.userId, table.startTime),
+  ],
+);
+
+export const hevySets = sqliteTable(
+  'hevy_sets',
+  {
+    userId: text('user_id').notNull(),
+    id: text('id').notNull(),
+    workoutId: text('workout_id').notNull(),
+    exerciseTemplateId: text('exercise_template_id').notNull(),
+    exerciseTitle: text('exercise_title').notNull(),
+    exerciseIndex: integer('exercise_index').notNull(),
+    setIndex: integer('set_index').notNull(),
+    setType: text('set_type').notNull().default('normal'),
+    weightKg: real('weight_kg'),
+    reps: integer('reps'),
+    rpe: real('rpe'),
+    durationSeconds: integer('duration_seconds'),
+    distanceMeters: real('distance_meters'),
+    exerciseNotes: text('exercise_notes'),
+    performedAt: text('performed_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.id] }),
+    index('idx_hevy_sets_user_performed').on(table.userId, table.performedAt),
+    index('idx_hevy_sets_user_exercise_performed').on(
+      table.userId,
+      table.exerciseTemplateId,
+      table.performedAt,
+    ),
+    index('idx_hevy_sets_user_workout').on(table.userId, table.workoutId),
+  ],
+);
+
+export const hevyTemplates = sqliteTable(
+  'hevy_templates',
+  {
+    userId: text('user_id').notNull(),
+    id: text('id').notNull(),
+    title: text('title').notNull(),
+    primaryMuscle: text('primary_muscle'),
+    secondaryMusclesJson: text('secondary_muscles_json')
+      .notNull()
+      .default('[]'),
+    equipment: text('equipment'),
+    isCustom: integer('is_custom').notNull().default(0),
+    syncedAt: text('synced_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.id] }),
+    index('idx_hevy_templates_user_title').on(table.userId, table.title),
+  ],
+);
+
+export const hevySyncState = sqliteTable('hevy_sync_state', {
+  userId: text('user_id').primaryKey(),
+  lastEventSince: text('last_event_since'),
+  fullSyncNextPage: integer('full_sync_next_page').notNull().default(1),
+  fullSyncPageCount: integer('full_sync_page_count'),
+  fullSyncCompletedAt: text('full_sync_completed_at'),
+  templatesSyncedAt: text('templates_synced_at'),
+  lastSyncAt: text('last_sync_at'),
+  lastError: text('last_error'),
+});

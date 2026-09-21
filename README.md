@@ -48,6 +48,11 @@ The analysis suite uses deterministic 26-week novice, intermediate, and advanced
 athlete fixtures. Derived metrics carry an analysis-engine version and source
 coverage metadata so future calculation changes can be audited and re-derived.
 
+Hevy workouts are stored twice: a raw JSON snapshot for faithful re-analysis and
+normalized workout, set, and template rows for fast bounded queries. The typed
+repository in `lib/hevy-repo.ts` owns writes to those tables. Dashboard reads stay
+on the live-data path until the incremental sync is complete and verified.
+
 ## Safety boundaries
 
 Estimated 1RM is treated as a trend signal, not a tested maximum. Coaching guidance is informational and does not diagnose injury or medical conditions. Programs remain drafts, and nothing is written back to Hevy without explicit approval.
