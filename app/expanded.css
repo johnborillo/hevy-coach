@@ -112,6 +112,21 @@ td:first-child { min-width: 190px; padding-left: 0; text-align: left; white-spac
 td strong,
 td small { display: block; }
 td small { color: #838b7f; font-size: 0.7rem; }
+.progression-cell { min-width: 170px; }
+.progression-cell > button { display: grid; grid-template-columns: auto minmax(0, 1fr) 16px; align-items: center; justify-content: end; gap: 7px; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: right; cursor: pointer; }
+.progression-cell > button > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.progression-cell > button > svg { width: 15px; color: #8a9286; transition: transform 160ms ease; }
+.progression-cell > button[aria-expanded='true'] > svg { transform: rotate(90deg); }
+.progression-detail-row > td { padding: 0 !important; border-top: 0; text-align: left; white-space: normal; }
+.progression-detail { display: grid; grid-template-columns: minmax(260px, 1.4fr) repeat(2, minmax(150px, 0.55fr)); align-items: center; gap: 20px; margin: 0 0 8px; padding: 16px 18px; border: 1px solid #dce3d6; border-radius: 12px; background: #f5f8f1; }
+.progression-copy span,
+.progression-sparkline > span { color: #5b711f; font-family: var(--font-geist-mono); font-size: 0.65rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+.progression-copy strong,
+.progression-copy small { display: block; }
+.progression-copy strong { margin-top: 5px; color: #30362d; font-size: 0.78rem; line-height: 1.45; }
+.progression-copy small { margin-top: 5px; color: #7c8478; font-size: 0.68rem; }
+.progression-sparkline > div { width: 100%; height: 48px; margin-top: 5px; }
+.sparkline-empty { display: grid; height: 48px; place-items: center; color: #8a9286; font-size: 0.67rem; }
 
 .empty-message { display: grid; min-height: 240px; place-items: center; align-content: center; gap: 8px; padding: 30px; color: #737b6f; text-align: center; }
 .empty-message svg { width: 28px; color: var(--signal-deep); }
@@ -502,6 +517,8 @@ td small { color: #8a9286; font-size: 0.68rem; }
   .topbar-actions { flex-direction: column; align-items: flex-end; gap: 8px; }
   .chat-workspace { grid-template-columns: 220px minmax(0, 1fr); }
   .coach-source-drawer { width: min(380px, calc(100% - 220px)); }
+  .progression-detail { grid-template-columns: 1fr 1fr; }
+  .progression-copy { grid-column: 1 / -1; }
   .coach-main { height: auto; overflow: visible; }
   .chat-workspace { height: 760px; }
   .form-section { grid-template-columns: 1fr; }
@@ -565,6 +582,8 @@ td small { color: #8a9286; font-size: 0.68rem; }
   .exercise-picker { min-width: 160px; max-width: 180px; }
   .panel-heading { gap: 12px; }
   .panel-heading.compact { align-items: flex-start; }
+  .progression-detail { grid-template-columns: 1fr; }
+  .progression-copy { grid-column: auto; }
 }
 
 @media (max-width: 1180px) {

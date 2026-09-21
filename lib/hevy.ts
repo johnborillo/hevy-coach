@@ -16,6 +16,11 @@ import {
   type Muscle,
   type MuscleOverride,
 } from './muscles';
+import {
+  computeProgression,
+  type ProgressionSession,
+  type ProgressionState,
+} from './progression';
 import { classifySet } from './sets';
 
 export type TrendPoint = { date: string; value: number; label: string };
@@ -103,6 +108,7 @@ export type DashboardData = {
     weightKg: number;
   }>;
   exerciseStats: Array<{
+    exerciseTemplateId: string;
     exercise: string;
     muscle: string;
     sessions: number;
@@ -110,7 +116,15 @@ export type DashboardData = {
     volumeKg: number;
     bestE1rmKg: number;
     change: number;
+    progressionStatus: ProgressionState['status'];
+    progressionRecommendation: ProgressionState['recommendation'];
+    progressionRationale: string;
+    modalLoadKg: number;
+    targetRepRange: [number, number] | null;
+    repsAtModalLoad: number[];
+    lastSetRpe: number[];
   }>;
+  progressionStates: ProgressionState[];
   recentWorkouts: Array<{
     title: string;
     date: string;
@@ -347,6 +361,7 @@ export function analyzeWorkoutHistory(
     string,
     { title: string; sessions: number; sets: number; volumeKg: number }
   >();
+  const progressionSessions = new Map<string, ProgressionSession[]>();
   for (const workout of sorted) {
     for (const exercise of workout.exercises) {
       const working = exercise.sets
@@ -368,6 +383,15 @@ export function analyzeWorkoutHistory(
         0,
       );
       exerciseTotals.set(exercise.exercise_template_id, total);
+      if (working.length) {
+        const sessions =
+          progressionSessions.get(exercise.exercise_template_id) ?? [];
+        sessions.push({
+          performedAt: workout.start_time,
+          sets: working.map((item) => item.classified),
+        });
+        progressionSessions.set(exercise.exercise_template_id, sessions);
+      }
       const candidates = working
         .map(({ set, classified }) => ({ set, value: classified.e1rmKg }))
         .filter(
@@ -388,9 +412,26 @@ export function analyzeWorkoutHistory(
     }
   }
 
-  const strengthTrends = [...histories.values()]
-    .sort((a, b) => b.length - a.length)
-    .map((history) => {
+  const progressionStates = [...progressionSessions.entries()]
+    .map(([id, sessions]) =>
+      computeProgression(
+        id,
+        exerciseTotals.get(id)?.title ?? 'Unknown exercise',
+        sessions,
+      ),
+    )
+    .sort(
+      (a, b) =>
+        new Date(b.lastPerformedAt).getTime() -
+        new Date(a.lastPerformedAt).getTime(),
+    );
+  const progressionById = new Map(
+    progressionStates.map((state) => [state.exerciseTemplateId, state]),
+  );
+
+  const strengthTrends = [...histories.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([id, history]) => {
       const chronological = [...history].reverse().slice(-8);
       const points = chronological.map((point) => ({
         date: point.date,
@@ -399,7 +440,7 @@ export function analyzeWorkoutHistory(
       }));
       return {
         exercise: history[0].title,
-        change: percentChange(points.at(-1)?.value ?? 0, points[0]?.value ?? 0),
+        change: progressionById.get(id)?.performanceSlopePct ?? 0,
         bestKg:
           Math.round(Math.max(...history.map((item) => item.value)) * 10) / 10,
         points,
@@ -458,8 +499,8 @@ export function analyzeWorkoutHistory(
   const exerciseStats = [...exerciseTotals.entries()]
     .map(([id, totals]) => {
       const history = histories.get(id) ?? [];
-      const recent = [...history].reverse().slice(-6);
       return {
+        exerciseTemplateId: id,
         exercise: totals.title,
         muscle: muscleLabel(
           resolveMuscles(
@@ -478,10 +519,18 @@ export function analyzeWorkoutHistory(
           ? Math.round(Math.max(...history.map((point) => point.value)) * 10) /
             10
           : 0,
-        change:
-          recent.length >= 2
-            ? percentChange(recent.at(-1)?.value ?? 0, recent[0].value)
-            : 0,
+        change: progressionById.get(id)?.performanceSlopePct ?? 0,
+        progressionStatus:
+          progressionById.get(id)?.status ?? 'insufficient_data',
+        progressionRecommendation:
+          progressionById.get(id)?.recommendation ?? 'none',
+        progressionRationale:
+          progressionById.get(id)?.rationale ??
+          'No comparable working-set history is available yet.',
+        modalLoadKg: progressionById.get(id)?.modalLoadKg ?? 0,
+        targetRepRange: progressionById.get(id)?.targetRepRange ?? null,
+        repsAtModalLoad: progressionById.get(id)?.repsAtModalLoad ?? [],
+        lastSetRpe: progressionById.get(id)?.lastSetRpe ?? [],
       };
     })
     .sort((a, b) => b.sessions - a.sessions)
@@ -514,7 +563,12 @@ export function analyzeWorkoutHistory(
   const lastGap = sorted[0]
     ? Math.round(daysAgo(sorted[0].start_time, nowMs))
     : 0;
-  const plateau = Math.abs(trend.change) < 1.5;
+  const priorityProgression =
+    progressionStates.find((state) => state.status === 'stalled') ??
+    progressionStates.find((state) => state.status === 'regressing') ??
+    progressionStates.find((state) => state.title === trend.exercise) ??
+    progressionStates[0];
+  const plateau = priorityProgression?.status === 'stalled';
   const biggestMuscle = [...muscles].sort((a, b) => b.sets - a.sets)[0];
   const lowestMuscle = [...muscles].sort((a, b) => a.sets - b.sets)[0];
   const weeklyReview = {
@@ -538,8 +592,10 @@ export function analyzeWorkoutHistory(
     ],
     nextSteps: [
       plateau
-        ? `Keep ${trend.exercise} load stable and earn one additional clean rep before increasing weight.`
-        : `Use the current ${trend.exercise} trend as the progression anchor next week.`,
+        ? `${priorityProgression.title}: ${priorityProgression.rationale}`
+        : priorityProgression
+          ? `${priorityProgression.title}: ${priorityProgression.rationale}`
+          : 'Repeat comparable working sets to establish a progression signal.',
       lastGap >= 7
         ? `Resume with fewer hard sets after the ${lastGap}-day gap.`
         : 'Keep the next session close to recent volume unless recovery says otherwise.',
@@ -579,6 +635,7 @@ export function analyzeWorkoutHistory(
     workloadWeeks,
     records,
     exerciseStats,
+    progressionStates,
     recentWorkouts: sorted.slice(0, 8).map((workout) => ({
       title: workout.title,
       date: formatShortDate(workout.start_time),
@@ -609,9 +666,9 @@ export function analyzeWorkoutHistory(
     exerciseOptions,
     weeklyReview,
     insights: {
-      plateau: plateau
-        ? `${trend.exercise} is effectively flat across ${trend.points.length} comparable sessions (${trend.change >= 0 ? '+' : ''}${trend.change}%). Check effort and technique before adding load.`
-        : `${trend.exercise} is trending ${trend.change > 0 ? 'up' : 'down'} ${Math.abs(trend.change)}% across the visible sessions.`,
+      plateau: priorityProgression
+        ? `${priorityProgression.title} is ${priorityProgression.status.replace('_', ' ')}. ${priorityProgression.rationale}`
+        : 'Repeat comparable working sets to establish a progression signal.',
       return:
         lastGap >= 14
           ? `Your last logged session was ${lastGap} days ago. Reduce working sets and leave several reps in reserve for the first week back.`
@@ -757,6 +814,81 @@ function demoData(
       previousSets: Math.round(muscle.previousSets * setMultiplier),
       volumeKg: Math.round(muscle.volumeKg * volumeMultiplier),
     }));
+  const sampleProgression = (
+    exerciseTemplateId: string,
+    title: string,
+    status: ProgressionState['status'],
+    recommendation: ProgressionState['recommendation'],
+    performanceSlopePct: number,
+  ): ProgressionState => ({
+    exerciseTemplateId,
+    slotId: null,
+    title,
+    sessionsAnalyzed: 6,
+    lastPerformedAt: '2026-09-08T18:10:00.000Z',
+    modalLoadKg: title.includes('Squat') ? 118 : 80,
+    repsAtModalLoad: [6, 6, 7, 7, 8, 8],
+    targetRepRange: [6, 8],
+    rpeCoverage: 0.83,
+    lastSetRpe: [8, 8, 8.5, 8.5, 9, 9],
+    rpeSlope: 0.2,
+    performanceIndex: points.map((point) => point.value),
+    performanceSlopePct,
+    sessionsSinceImprovement: status === 'stalled' ? 4 : 1,
+    status,
+    recommendation,
+    rationale:
+      recommendation === 'add_load'
+        ? 'Recent performance is improving and the top of the rep range has been reached.'
+        : recommendation === 'add_reps'
+          ? 'Performance is improving; keep the load stable and build reps before adding weight.'
+          : 'Performance is stable; keep the current exposure and reassess after another session.',
+  });
+  const progressionStates = [
+    sampleProgression(
+      'sample-bench',
+      'Bench Press (Barbell)',
+      'progressing',
+      'add_load',
+      1.1,
+    ),
+    sampleProgression(
+      'sample-squat',
+      'Squat (Barbell)',
+      'progressing',
+      'add_reps',
+      0.9,
+    ),
+    sampleProgression(
+      'sample-pulldown',
+      'Lat Pulldown',
+      'holding',
+      'hold',
+      0.2,
+    ),
+    sampleProgression(
+      'sample-rdl',
+      'Romanian Deadlift',
+      'holding',
+      'hold',
+      -0.3,
+    ),
+  ];
+  const sampleProgressionFields = (id: string) => {
+    const state = progressionStates.find(
+      (progression) => progression.exerciseTemplateId === id,
+    ) as ProgressionState;
+    return {
+      exerciseTemplateId: id,
+      progressionStatus: state.status,
+      progressionRecommendation: state.recommendation,
+      progressionRationale: state.rationale,
+      modalLoadKg: state.modalLoadKg,
+      targetRepRange: state.targetRepRange,
+      repsAtModalLoad: state.repsAtModalLoad,
+      lastSetRpe: state.lastSetRpe,
+    };
+  };
   return {
     analysis: createAnalysisMetadata([], [], new Date()),
     connected: false,
@@ -836,6 +968,7 @@ function demoData(
     ],
     exerciseStats: [
       {
+        ...sampleProgressionFields('sample-bench'),
         exercise: 'Bench Press (Barbell)',
         muscle: 'Chest',
         sessions: 14,
@@ -845,6 +978,7 @@ function demoData(
         change: 4.8,
       },
       {
+        ...sampleProgressionFields('sample-squat'),
         exercise: 'Squat (Barbell)',
         muscle: 'Quadriceps',
         sessions: 11,
@@ -854,6 +988,7 @@ function demoData(
         change: 3.2,
       },
       {
+        ...sampleProgressionFields('sample-pulldown'),
         exercise: 'Lat Pulldown',
         muscle: 'Lats',
         sessions: 10,
@@ -863,6 +998,7 @@ function demoData(
         change: 1.7,
       },
       {
+        ...sampleProgressionFields('sample-rdl'),
         exercise: 'Romanian Deadlift',
         muscle: 'Hamstrings',
         sessions: 9,
@@ -872,6 +1008,7 @@ function demoData(
         change: -0.8,
       },
     ],
+    progressionStates,
     recentWorkouts: [
       {
         title: 'Upper A',
@@ -967,6 +1104,7 @@ function unavailableData(message: string): DashboardData {
     workloadWeeks: emptyWeeks,
     records: [],
     exerciseStats: [],
+    progressionStates: [],
     recentWorkouts: [],
     calendarWorkouts: [],
     exerciseOptions: [],
@@ -1008,6 +1146,19 @@ export async function getDashboardData(
         new Date(),
         overrides,
       );
+      try {
+        const { saveProgressionStates } = await import('./progression-repo');
+        await saveProgressionStates(
+          userId,
+          dashboard.progressionStates,
+          dashboard.analysis.version,
+          dashboard.analysis.generatedAt,
+        );
+      } catch (error) {
+        console.error('Progression state cache could not be refreshed', {
+          message: error instanceof Error ? error.message : 'unknown',
+        });
+      }
       const progress = syncState?.lastError
         ? ' · latest sync needs attention'
         : syncState?.fullSyncCompletedAt

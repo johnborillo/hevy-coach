@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  Fragment,
   useEffect,
   useMemo,
   useRef,
@@ -43,6 +44,8 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip as ChartTooltip,
   XAxis,
@@ -175,6 +178,59 @@ function heightFromImperial(feet: string, inches: string) {
 
 function delta(value: number) {
   return `${value >= 0 ? '+' : ''}${value}%`;
+}
+
+const PROGRESSION_LABELS = {
+  progressing: 'Progressing',
+  holding: 'Holding',
+  stalled: 'Stalled',
+  regressing: 'Regressing',
+  insufficient_data: 'Learning',
+  variable_load: 'Variable load',
+} as const;
+
+const RECOMMENDATION_LABELS = {
+  add_load: 'Add load',
+  add_reps: 'Add reps',
+  hold: 'Hold steady',
+  reduce_load: 'Reduce load',
+  reduce_volume: 'Reduce volume',
+  swap_or_rotate: 'Swap or rotate',
+  log_rpe: 'Log RPE',
+  none: 'No action yet',
+} as const;
+
+function progressionTone(
+  status: DashboardData['exerciseStats'][number]['progressionStatus'],
+) {
+  if (status === 'progressing') return 'good' as const;
+  if (status === 'stalled' || status === 'regressing') return 'warn' as const;
+  return 'neutral' as const;
+}
+
+function MiniSparkline({
+  values,
+  color = 'var(--signal-deep)',
+}: {
+  values: number[];
+  color?: string;
+}) {
+  if (values.length < 2)
+    return <span className="sparkline-empty">Not enough data</span>;
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <LineChart data={values.map((value, index) => ({ index, value }))}>
+        <Line
+          type="monotone"
+          dataKey="value"
+          stroke={color}
+          strokeWidth={2}
+          dot={{ r: 2, fill: color, strokeWidth: 0 }}
+          isAnimationActive={false}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
 }
 
 function orderConversations(items: ConversationSummary[]) {
@@ -324,6 +380,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     key: LedgerSortKey;
     direction: SortDirection;
   }>({ key: 'sessions', direction: 'desc' });
+  const [expandedProgression, setExpandedProgression] = useState<string | null>(
+    null,
+  );
   const [programs, setPrograms] = useState<TrainingProgram[]>([]);
   const [activeProgram, setActiveProgram] = useState<TrainingProgram | null>(
     null,
@@ -1484,7 +1543,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                           onSort={changeLedgerSort}
                         />
                         <SortableHeading
-                          label="Trend"
+                          label="Progression"
                           sortKey="trend"
                           activeKey={ledgerSort.key}
                           direction={ledgerSort.direction}
@@ -1493,35 +1552,113 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {sortedExerciseStats.map((exercise) => (
-                        <tr key={exercise.exercise}>
-                          <td>
-                            <strong>{exercise.exercise}</strong>
-                            <small>{exercise.muscle}</small>
-                          </td>
-                          <td>{exercise.sessions}</td>
-                          <td>{exercise.workingSets}</td>
-                          <td>{volume(exercise.volumeKg, unit)}</td>
-                          <td>
-                            {exercise.bestE1rmKg
-                              ? weight(exercise.bestE1rmKg, unit)
-                              : '—'}
-                          </td>
-                          <td>
-                            <StatusPill
-                              tone={
-                                exercise.change > 1
-                                  ? 'good'
-                                  : exercise.change < -1
-                                    ? 'warn'
-                                    : 'neutral'
-                              }
-                            >
-                              {delta(exercise.change)}
-                            </StatusPill>
-                          </td>
-                        </tr>
-                      ))}
+                      {sortedExerciseStats.map((exercise) => {
+                        const expanded =
+                          expandedProgression === exercise.exerciseTemplateId;
+                        return (
+                          <Fragment key={exercise.exerciseTemplateId}>
+                            <tr>
+                              <td>
+                                <strong>{exercise.exercise}</strong>
+                                <small>{exercise.muscle}</small>
+                              </td>
+                              <td>{exercise.sessions}</td>
+                              <td>{exercise.workingSets}</td>
+                              <td>{volume(exercise.volumeKg, unit)}</td>
+                              <td>
+                                {exercise.bestE1rmKg
+                                  ? weight(exercise.bestE1rmKg, unit)
+                                  : '—'}
+                              </td>
+                              <td className="progression-cell">
+                                <button
+                                  type="button"
+                                  aria-label={`${expanded ? 'Hide' : 'Show'} progression evidence for ${exercise.exercise}`}
+                                  aria-expanded={expanded}
+                                  onClick={() =>
+                                    setExpandedProgression(
+                                      expanded
+                                        ? null
+                                        : exercise.exerciseTemplateId,
+                                    )
+                                  }
+                                >
+                                  <StatusPill
+                                    tone={progressionTone(
+                                      exercise.progressionStatus,
+                                    )}
+                                  >
+                                    {
+                                      PROGRESSION_LABELS[
+                                        exercise.progressionStatus
+                                      ]
+                                    }
+                                  </StatusPill>
+                                  <small>
+                                    {
+                                      RECOMMENDATION_LABELS[
+                                        exercise.progressionRecommendation
+                                      ]
+                                    }
+                                  </small>
+                                  <ChevronRight aria-hidden="true" />
+                                </button>
+                              </td>
+                            </tr>
+                            {expanded && (
+                              <tr className="progression-detail-row">
+                                <td
+                                  colSpan={6}
+                                  aria-label={`${exercise.exercise} progression evidence`}
+                                >
+                                  <div className="progression-detail">
+                                    <div className="progression-copy">
+                                      <span>
+                                        {
+                                          RECOMMENDATION_LABELS[
+                                            exercise.progressionRecommendation
+                                          ]
+                                        }
+                                      </span>
+                                      <strong>
+                                        {exercise.progressionRationale}
+                                      </strong>
+                                      <small>
+                                        {exercise.modalLoadKg
+                                          ? `Modal load ${weight(exercise.modalLoadKg, unit)}`
+                                          : 'No stable modal load'}
+                                        {exercise.targetRepRange
+                                          ? ` · inferred range ${exercise.targetRepRange[0]}–${exercise.targetRepRange[1]} reps`
+                                          : ''}
+                                        {exercise.change
+                                          ? ` · robust slope ${delta(exercise.change)} per session`
+                                          : ''}
+                                      </small>
+                                    </div>
+                                    <div className="progression-sparkline">
+                                      <span>Reps at working load</span>
+                                      <div>
+                                        <MiniSparkline
+                                          values={exercise.repsAtModalLoad}
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="progression-sparkline">
+                                      <span>Last-set RPE</span>
+                                      <div>
+                                        <MiniSparkline
+                                          values={exercise.lastSetRpe}
+                                          color="#a85c08"
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

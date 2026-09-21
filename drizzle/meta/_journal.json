@@ -36,6 +36,13 @@
       "when": 1790023344350,
       "tag": "0004_nebulous_demogoblin",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790025046002,
+      "tag": "0005_dizzy_iron_monger",
+      "breakpoints": true
     }
   ]
 }

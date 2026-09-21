@@ -1,6 +1,6 @@
 import type { ExerciseTemplate, HevyWorkout } from './hevy-types';
 
-export const ANALYSIS_ENGINE_VERSION = 3;
+export const ANALYSIS_ENGINE_VERSION = 4;
 
 export type AnalysisCoverage = {
   workoutCount: number;
