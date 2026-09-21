@@ -3,11 +3,13 @@ import {
   type AnalysisMetadata,
 } from './analysis-contracts';
 import type {
+  HevyExercise,
   ExerciseTemplate,
   HevySet,
   HevyWorkout,
 } from './hevy-types';
 import { deserializeHevyTemplate } from './hevy-store';
+import { classifySet } from './sets';
 
 export type TrendPoint = { date: string; value: number; label: string };
 
@@ -120,10 +122,6 @@ export type DashboardData = {
 
 const DAY = 86_400_000;
 
-function isWorkingSet(set: HevySet) {
-  return set.type !== "warmup";
-}
-
 function titleCase(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -150,19 +148,6 @@ function durationMinutes(workout: HevyWorkout) {
   return Math.max(0, (new Date(workout.end_time).getTime() - new Date(workout.start_time).getTime()) / 60_000);
 }
 
-function estimatedOneRepMax(set: HevySet) {
-  if (!set.weight_kg || !set.reps || set.reps > 15) return null;
-  return set.weight_kg * (1 + set.reps / 30);
-}
-
-function setVolume(set: HevySet) {
-  return isWorkingSet(set) && set.weight_kg && set.reps ? set.weight_kg * set.reps : 0;
-}
-
-function workoutVolume(workout: HevyWorkout) {
-  return workout.exercises.flatMap((exercise) => exercise.sets).reduce((sum, set) => sum + setVolume(set), 0);
-}
-
 function percentChange(current: number, previous: number) {
   if (!previous) return current ? 100 : 0;
   return Math.round(((current - previous) / previous) * 1000) / 10;
@@ -185,14 +170,39 @@ export function analyzeWorkoutHistory(
   const nowMs = now.getTime();
   const sorted = [...workouts].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
   const templateMap = new Map(templates.map((item) => [item.id, item]));
+  const classify = (exercise: HevyExercise, set: HevySet) => {
+    const template = templateMap.get(exercise.exercise_template_id);
+    return classifySet(set, {
+      title: exercise.title,
+      equipment: template?.equipment,
+      primary_muscle_group: template?.primary_muscle_group,
+    });
+  };
+  const exerciseWorkingSets = (exercise: HevyExercise) =>
+    exercise.sets.reduce(
+      (sum, set) => sum + classify(exercise, set).countsAsWorking,
+      0,
+    );
+  const exerciseVolume = (exercise: HevyExercise) =>
+    exercise.sets.reduce(
+      (sum, set) => sum + (classify(exercise, set).loadVolumeKg ?? 0),
+      0,
+    );
+  const workoutWorkingSets = (workout: HevyWorkout) =>
+    workout.exercises.reduce(
+      (sum, exercise) => sum + exerciseWorkingSets(exercise),
+      0,
+    );
+  const workoutVolume = (workout: HevyWorkout) =>
+    workout.exercises.reduce(
+      (sum, exercise) => sum + exerciseVolume(exercise),
+      0,
+    );
   const recent30 = sorted.filter((workout) => daysAgo(workout.start_time, nowMs) <= 30);
   const recent7 = sorted.filter((workout) => daysAgo(workout.start_time, nowMs) <= 7);
   const previous7 = sorted.filter((workout) => daysAgo(workout.start_time, nowMs) > 7 && daysAgo(workout.start_time, nowMs) <= 14);
   const countSets = (items: HevyWorkout[]) =>
-    items
-      .flatMap((workout) => workout.exercises)
-      .flatMap((exercise) => exercise.sets)
-      .filter(isWorkingSet).length;
+    items.reduce((sum, workout) => sum + workoutWorkingSets(workout), 0);
   const totalVolume = (items: HevyWorkout[]) => items.reduce((sum, workout) => sum + workoutVolume(workout), 0);
   const workingSets7d = countSets(recent7);
   const volume7d = totalVolume(recent7);
@@ -211,14 +221,14 @@ export function analyzeWorkoutHistory(
 
       for (const exercise of workout.exercises) {
         const muscle = templateMap.get(exercise.exercise_template_id)?.primary_muscle_group ?? "other";
-        const sets = exercise.sets.filter(isWorkingSet);
+        const workingSets = exerciseWorkingSets(exercise);
         if (inCurrentWindow) {
           const value = current.get(muscle) ?? { sets: 0, volumeKg: 0 };
-          value.sets += sets.length;
-          value.volumeKg += sets.reduce((sum, set) => sum + setVolume(set), 0);
+          value.sets += workingSets;
+          value.volumeKg += exerciseVolume(exercise);
           current.set(muscle, value);
         } else {
-          previous.set(muscle, (previous.get(muscle) ?? 0) + sets.length);
+          previous.set(muscle, (previous.get(muscle) ?? 0) + workingSets);
         }
       }
     }
@@ -254,7 +264,9 @@ export function analyzeWorkoutHistory(
   const exerciseTotals = new Map<string, { title: string; sessions: number; sets: number; volumeKg: number }>();
   for (const workout of sorted) {
     for (const exercise of workout.exercises) {
-      const working = exercise.sets.filter(isWorkingSet);
+      const working = exercise.sets
+        .map((set) => ({ set, classified: classify(exercise, set) }))
+        .filter((item) => item.classified.countsAsWorking > 0);
       const total = exerciseTotals.get(exercise.exercise_template_id) ?? {
         title: exercise.title,
         sessions: 0,
@@ -262,11 +274,17 @@ export function analyzeWorkoutHistory(
         volumeKg: 0,
       };
       total.sessions += 1;
-      total.sets += working.length;
-      total.volumeKg += working.reduce((sum, set) => sum + setVolume(set), 0);
+      total.sets += working.reduce(
+        (sum, item) => sum + item.classified.countsAsWorking,
+        0,
+      );
+      total.volumeKg += working.reduce(
+        (sum, item) => sum + (item.classified.loadVolumeKg ?? 0),
+        0,
+      );
       exerciseTotals.set(exercise.exercise_template_id, total);
       const candidates = working
-        .map((set) => ({ set, value: estimatedOneRepMax(set) }))
+        .map(({ set, classified }) => ({ set, value: classified.e1rmKg }))
         .filter((item) => item.value !== null && item.set.reps && item.set.weight_kg)
         .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
       if (!candidates.length) continue;
@@ -365,7 +383,9 @@ export function analyzeWorkoutHistory(
 
   const exerciseOptions = exerciseStats.slice(0, 10).map((stat) => {
     const latestExercise = sorted.flatMap((workout) => workout.exercises).find((exercise) => exercise.title === stat.exercise);
-    const latestSets = latestExercise?.sets.filter(isWorkingSet) ?? [];
+    const latestSets = latestExercise?.sets.filter(
+      (set) => classify(latestExercise, set).countsAsWorking > 0,
+    ) ?? [];
     const representative = latestSets.find((set) => set.weight_kg && set.reps);
     return {
       name: stat.exercise,
@@ -434,7 +454,7 @@ export function analyzeWorkoutHistory(
       date: formatShortDate(workout.start_time),
       duration: `${Math.round(durationMinutes(workout))} min`,
       exercises: workout.exercises.length,
-      workingSets: workout.exercises.flatMap((exercise) => exercise.sets).filter(isWorkingSet).length,
+      workingSets: workoutWorkingSets(workout),
       volumeKg: Math.round(workoutVolume(workout)),
     })),
     calendarWorkouts: sorted.map((workout) => ({
@@ -443,7 +463,7 @@ export function analyzeWorkoutHistory(
       date: workout.start_time.slice(0, 10),
       time: formatTime(workout.start_time),
       durationMinutes: Math.round(durationMinutes(workout)),
-      workingSets: workout.exercises.flatMap((exercise) => exercise.sets).filter(isWorkingSet).length,
+      workingSets: workoutWorkingSets(workout),
       volumeKg: Math.round(workoutVolume(workout)),
       exercises: workout.exercises.map((exercise) => ({
         title: exercise.title,

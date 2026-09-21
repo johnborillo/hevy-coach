@@ -119,7 +119,7 @@ const STARTERS = [
 
 const PROGRESS_HELP = {
   workingSets:
-    'The total number of non-warm-up sets logged in the most recent 7 days. It measures recent training volume; it does not grade how hard each set was.',
+    'Working and failure sets logged in the most recent 7 days. Warm-ups are excluded and dropsets count as half a set so the total better reflects training stimulus.',
   primaryLiftTrend:
     'The change from the first to the latest estimated one-rep max across up to eight logged sessions for the exercise selected below. Use it as a direction-of-travel signal, not a tested max.',
   recentEstimatedPrs:
@@ -127,7 +127,7 @@ const PROGRESS_HELP = {
   trainingFrequency:
     'Your logged Hevy sessions from the past 30 days converted to an average number of workouts per week.',
   estimatedStrength:
-    'An estimated one-rep max (e1RM) calculated with the Epley formula from the best non-warm-up set of 15 reps or fewer in each session. It helps compare strength over time without testing a true max.',
+    'An estimated one-rep max (e1RM) calculated with the Epley formula from compound sets of 1–8 reps. Isolation, dropset, assisted, timed, and distance work is excluded to keep the signal meaningful.',
   estimatedPrBoard:
     'Up to five exercises ranked by their best estimated one-rep max from the past 30 days. Each row shows the source set and date. These are calculated estimates, not necessarily tested or all-time personal records.',
   muscleDistribution:

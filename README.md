@@ -4,8 +4,9 @@ A private training-intelligence workspace for Hevy. Hevy remains the workout log
 
 ## Product capabilities
 
-- Reads up to 120 recent workouts and available exercise templates from Hevy.
+- Synchronizes complete workout history and available exercise templates from Hevy into a private local training store.
 - Tracks training frequency, load-volume, direct muscle-group sets, estimated 1RM trends, recent estimated PRs, and exercise-level progression.
+- Classifies warm-ups, working sets, dropsets, failure sets, bodyweight/assisted work, and timed or distance efforts before calculating metrics.
 - Generates an automatic weekly review with wins, watch items, and next steps.
 - Saves athlete profile details used to personalize recommendations.
 - Saves coaching chats and generated programs in a private D1 database.
