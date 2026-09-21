@@ -540,6 +540,44 @@ h2 {
   background: var(--panel-dark);
 }
 
+.bar-track.muscle-stack {
+  display: flex;
+}
+
+.bar-track.muscle-stack span {
+  border-radius: 0;
+}
+
+.bar-track.muscle-stack .direct {
+  background: var(--panel-dark);
+}
+
+.bar-track.muscle-stack .indirect {
+  background: var(--signal);
+}
+
+.muscle-mapping-card {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.muscle-mapping-card p {
+  margin: 3px 0 0;
+  color: #697163;
+  font-size: 0.78rem;
+}
+
+.muscle-mapping-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.7fr) auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+}
+
 .week-note {
   display: flex;
   gap: 10px;
@@ -864,6 +902,14 @@ footer {
   .coach-layout {
     grid-template-columns: 1fr;
     gap: 18px;
+  }
+
+  .muscle-mapping-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .muscle-mapping-row > span {
+    grid-column: 1 / -1;
   }
 
   footer {

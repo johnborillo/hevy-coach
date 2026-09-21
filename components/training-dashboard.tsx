@@ -65,6 +65,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { DashboardData, MuscleWindow } from '@/lib/hevy';
+import { MUSCLES, muscleLabel, type Muscle } from '@/lib/muscles';
 import type {
   AthleteProfile,
   ChatMessage,
@@ -131,7 +132,7 @@ const PROGRESS_HELP = {
   estimatedPrBoard:
     'Up to five exercises ranked by their best estimated one-rep max from the past 30 days. Each row shows the source set and date. These are calculated estimates, not necessarily tested or all-time personal records.',
   muscleDistribution:
-    'Non-warm-up sets grouped by each exercise’s primary muscle in the selected time window. The comparison uses the immediately preceding window of the same length.',
+    'Working sets are assigned to a detailed muscle map. Primary muscles count as direct sets; secondary muscles count as half an indirect set. Zero-volume muscles stay visible, and the comparison uses the preceding window of the same length.',
   exercisePerformance:
     'A movement-by-movement summary of your synchronized Hevy history: sessions, non-warm-up sets, load-volume, best e1RM, and e1RM change across up to six recent comparable sessions.',
 };
@@ -205,7 +206,11 @@ function SortableHeading({
     : ArrowUpDown;
 
   return (
-    <th aria-sort={active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'}>
+    <th
+      aria-sort={
+        active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'
+      }
+    >
       <button type="button" onClick={() => onSort(sortKey)}>
         {label} <Icon aria-hidden="true" />
       </button>
@@ -329,6 +334,17 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   const [programActionError, setProgramActionError] = useState('');
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncError, setSyncError] = useState('');
+  const [muscleMappingBusy, setMuscleMappingBusy] = useState<string | null>(
+    null,
+  );
+  const [muscleMappingError, setMuscleMappingError] = useState('');
+  const [muscleMappingDrafts, setMuscleMappingDrafts] = useState<
+    Record<string, Muscle>
+  >(() =>
+    Object.fromEntries(
+      data.unmappedExercises.map((exercise) => [exercise.id, 'other']),
+    ),
+  );
   const [editingProgramId, setEditingProgramId] = useState<string | null>(null);
   const [adjustingProgramId, setAdjustingProgramId] = useState<string | null>(
     null,
@@ -367,7 +383,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   );
   const muscleDistribution = data.muscleWindows[muscleWindow];
   const maxMuscleSets = Math.max(
-    ...muscleDistribution.map((muscle) => muscle.sets),
+    ...muscleDistribution.map((muscle) => muscle.sets + muscle.indirectSets),
     1,
   );
   const sortedExerciseStats = useMemo(() => {
@@ -398,7 +414,8 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
         typeof aValue === 'string' && typeof bValue === 'string'
           ? aValue.localeCompare(bValue, undefined, { sensitivity: 'base' })
           : Number(aValue) - Number(bValue);
-      const directed = ledgerSort.direction === 'asc' ? comparison : -comparison;
+      const directed =
+        ledgerSort.direction === 'asc' ? comparison : -comparison;
       return (
         directed ||
         a.exercise.localeCompare(b.exercise, undefined, { sensitivity: 'base' })
@@ -444,9 +461,40 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
       }
       throw new Error('The history import needs another sync pass.');
     } catch (error) {
-      setSyncError(error instanceof Error ? error.message : 'Hevy sync failed.');
+      setSyncError(
+        error instanceof Error ? error.message : 'Hevy sync failed.',
+      );
     } finally {
       setSyncBusy(false);
+    }
+  }
+
+  async function saveMuscleMapping(exerciseTemplateId: string) {
+    setMuscleMappingBusy(exerciseTemplateId);
+    setMuscleMappingError('');
+    try {
+      const response = await fetch('/api/muscle-overrides', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          exerciseTemplateId,
+          primaryMuscle: muscleMappingDrafts[exerciseTemplateId] ?? 'other',
+          secondaryMuscles: [],
+        }),
+      });
+      const result = await readJson<ApiError>(response);
+      if (!response.ok) {
+        throw new Error(result.error || 'Muscle mapping could not be saved.');
+      }
+      window.location.reload();
+    } catch (error) {
+      setMuscleMappingError(
+        error instanceof Error
+          ? error.message
+          : 'Muscle mapping could not be saved.',
+      );
+    } finally {
+      setMuscleMappingBusy(null);
     }
   }
 
@@ -930,7 +978,11 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
               title={syncError || 'Synchronize your Hevy history'}
             >
               <RefreshCw className={syncBusy ? 'spinning' : ''} />
-              <span>{syncBusy ? 'Syncing Hevy history…' : syncError || data.syncMessage}</span>
+              <span>
+                {syncBusy
+                  ? 'Syncing Hevy history…'
+                  : syncError || data.syncMessage}
+              </span>
             </button>
           </div>
         </header>
@@ -1289,28 +1341,95 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 </div>
                 <div className="muscle-bars">
                   {muscleDistribution.map((muscle) => (
-                    <div className="muscle-row" key={muscle.name}>
+                    <div className="muscle-row" key={muscle.key}>
                       <div>
                         <span>{muscle.name}</span>
                         <span>
-                          <strong>{muscle.sets}</strong>
+                          <strong>
+                            {Math.round(muscle.sets * 10) / 10} direct
+                          </strong>
                           <small>
+                            {muscle.indirectSets > 0
+                              ? ` · ${Math.round(muscle.indirectSets * 10) / 10} indirect`
+                              : ''}
+                            {' · '}
                             {muscle.sets - muscle.previousSets >= 0 ? '+' : ''}
-                            {muscle.sets - muscle.previousSets} vs prior{' '}
-                            {muscleWindow}d
+                            {Math.round(
+                              (muscle.sets - muscle.previousSets) * 10,
+                            ) / 10}{' '}
+                            vs prior {muscleWindow}d
                           </small>
                         </span>
                       </div>
-                      <div className="bar-track">
+                      <div className="bar-track muscle-stack">
                         <span
+                          className="direct"
                           style={{
-                            width: `${Math.max(5, (muscle.sets / maxMuscleSets) * 100)}%`,
+                            width: `${(muscle.sets / maxMuscleSets) * 100}%`,
+                          }}
+                        />
+                        <span
+                          className="indirect"
+                          style={{
+                            width: `${(muscle.indirectSets / maxMuscleSets) * 100}%`,
                           }}
                         />
                       </div>
                     </div>
                   ))}
                 </div>
+                {data.unmappedExercises.length > 0 && (
+                  <div className="muscle-mapping-card">
+                    <div>
+                      <strong>Map custom exercises</strong>
+                      <p>
+                        Choose the primary muscle so these sets are counted in
+                        the right place.
+                      </p>
+                    </div>
+                    {data.unmappedExercises.map((exercise) => (
+                      <div className="muscle-mapping-row" key={exercise.id}>
+                        <span>{exercise.title}</span>
+                        <Select
+                          value={muscleMappingDrafts[exercise.id] ?? 'other'}
+                          onValueChange={(value) => {
+                            if (!value) return;
+                            setMuscleMappingDrafts((current) => ({
+                              ...current,
+                              [exercise.id]: value as Muscle,
+                            }));
+                          }}
+                        >
+                          <SelectTrigger
+                            aria-label={`Primary muscle for ${exercise.title}`}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {MUSCLES.map((muscle) => (
+                              <SelectItem key={muscle} value={muscle}>
+                                {muscleLabel(muscle)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => void saveMuscleMapping(exercise.id)}
+                          disabled={muscleMappingBusy !== null}
+                        >
+                          {muscleMappingBusy === exercise.id
+                            ? 'Saving…'
+                            : 'Save'}
+                        </Button>
+                      </div>
+                    ))}
+                    {muscleMappingError && (
+                      <p className="form-error">{muscleMappingError}</p>
+                    )}
+                  </div>
+                )}
               </article>
               <article className="exercise-table-panel">
                 <div className="panel-heading compact">
@@ -1433,15 +1552,13 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
               <div className="conversation-list">
                 {conversations.map((conversation) => (
                   <div
-                    className={
-                      [
-                        'conversation-row',
-                        activeConversation === conversation.id ? 'active' : '',
-                        conversation.pinned ? 'pinned' : '',
-                      ]
-                        .filter(Boolean)
-                        .join(' ')
-                    }
+                    className={[
+                      'conversation-row',
+                      activeConversation === conversation.id ? 'active' : '',
+                      conversation.pinned ? 'pinned' : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
                     key={conversation.id}
                   >
                     <button

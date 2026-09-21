@@ -9,6 +9,13 @@ import type {
   HevyWorkout,
 } from './hevy-types';
 import { deserializeHevyTemplate } from './hevy-store';
+import {
+  MUSCLES,
+  muscleLabel,
+  resolveMuscles,
+  type Muscle,
+  type MuscleOverride,
+} from './muscles';
 import { classifySet } from './sets';
 
 export type TrendPoint = { date: string; value: number; label: string };
@@ -45,8 +52,10 @@ export type CalendarWorkout = {
 };
 
 export type MuscleDistribution = {
+  key: Muscle;
   name: string;
   sets: number;
+  indirectSets: number;
   previousSets: number;
   volumeKg: number;
 };
@@ -72,6 +81,7 @@ export type DashboardData = {
   };
   muscles: MuscleDistribution[];
   muscleWindows: Record<MuscleWindow, MuscleDistribution[]>;
+  unmappedExercises: Array<{ id: string; title: string }>;
   trend: { exercise: string; change: number; points: TrendPoint[] };
   strengthTrends: Array<{
     exercise: string;
@@ -122,30 +132,31 @@ export type DashboardData = {
 
 const DAY = 86_400_000;
 
-function titleCase(value: string) {
-  return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
 function daysAgo(iso: string, nowMs = Date.now()) {
   return (nowMs - new Date(iso).getTime()) / DAY;
 }
 
 function formatShortDate(iso: string) {
-  return new Intl.DateTimeFormat("en-CA", {
-    month: "short",
-    day: "numeric",
+  return new Intl.DateTimeFormat('en-CA', {
+    month: 'short',
+    day: 'numeric',
   }).format(new Date(iso));
 }
 
 function formatTime(iso: string) {
-  return new Intl.DateTimeFormat("en-CA", {
-    hour: "numeric",
-    minute: "2-digit",
+  return new Intl.DateTimeFormat('en-CA', {
+    hour: 'numeric',
+    minute: '2-digit',
   }).format(new Date(iso));
 }
 
 function durationMinutes(workout: HevyWorkout) {
-  return Math.max(0, (new Date(workout.end_time).getTime() - new Date(workout.start_time).getTime()) / 60_000);
+  return Math.max(
+    0,
+    (new Date(workout.end_time).getTime() -
+      new Date(workout.start_time).getTime()) /
+      60_000,
+  );
 }
 
 function percentChange(current: number, previous: number) {
@@ -166,10 +177,26 @@ export function analyzeWorkoutHistory(
   templates: ExerciseTemplate[],
   athleteName: string,
   now = new Date(),
+  muscleOverrides: MuscleOverride[] = [],
 ): DashboardData {
   const nowMs = now.getTime();
-  const sorted = [...workouts].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+  const sorted = [...workouts].sort(
+    (a, b) =>
+      new Date(b.start_time).getTime() - new Date(a.start_time).getTime(),
+  );
   const templateMap = new Map(templates.map((item) => [item.id, item]));
+  const overrideMap = new Map(
+    muscleOverrides.map((item) => [item.exerciseTemplateId, item]),
+  );
+  const resolvedFor = (exercise: HevyExercise) =>
+    resolveMuscles(
+      templateMap.get(exercise.exercise_template_id) ?? {
+        id: exercise.exercise_template_id,
+        title: exercise.title,
+        is_custom: true,
+      },
+      overrideMap.get(exercise.exercise_template_id),
+    );
   const classify = (exercise: HevyExercise, set: HevySet) => {
     const template = templateMap.get(exercise.exercise_template_id);
     return classifySet(set, {
@@ -198,20 +225,35 @@ export function analyzeWorkoutHistory(
       (sum, exercise) => sum + exerciseVolume(exercise),
       0,
     );
-  const recent30 = sorted.filter((workout) => daysAgo(workout.start_time, nowMs) <= 30);
-  const recent7 = sorted.filter((workout) => daysAgo(workout.start_time, nowMs) <= 7);
-  const previous7 = sorted.filter((workout) => daysAgo(workout.start_time, nowMs) > 7 && daysAgo(workout.start_time, nowMs) <= 14);
+  const recent30 = sorted.filter(
+    (workout) => daysAgo(workout.start_time, nowMs) <= 30,
+  );
+  const recent7 = sorted.filter(
+    (workout) => daysAgo(workout.start_time, nowMs) <= 7,
+  );
+  const previous7 = sorted.filter(
+    (workout) =>
+      daysAgo(workout.start_time, nowMs) > 7 &&
+      daysAgo(workout.start_time, nowMs) <= 14,
+  );
   const countSets = (items: HevyWorkout[]) =>
     items.reduce((sum, workout) => sum + workoutWorkingSets(workout), 0);
-  const totalVolume = (items: HevyWorkout[]) => items.reduce((sum, workout) => sum + workoutVolume(workout), 0);
+  const totalVolume = (items: HevyWorkout[]) =>
+    items.reduce((sum, workout) => sum + workoutVolume(workout), 0);
   const workingSets7d = countSets(recent7);
   const volume7d = totalVolume(recent7);
   const previousVolume7d = totalVolume(previous7);
-  const totalMinutes = recent30.reduce((sum, workout) => sum + durationMinutes(workout), 0);
+  const totalMinutes = recent30.reduce(
+    (sum, workout) => sum + durationMinutes(workout),
+    0,
+  );
 
   const muscleDistribution = (windowDays: number) => {
-    const current = new Map<string, { sets: number; volumeKg: number }>();
-    const previous = new Map<string, number>();
+    const current = new Map<
+      Muscle,
+      { directSets: number; indirectSets: number; volumeKg: number }
+    >();
+    const previous = new Map<Muscle, number>();
 
     for (const workout of sorted) {
       const age = daysAgo(workout.start_time, nowMs);
@@ -220,28 +262,57 @@ export function analyzeWorkoutHistory(
       if (!inCurrentWindow && !inPreviousWindow) continue;
 
       for (const exercise of workout.exercises) {
-        const muscle = templateMap.get(exercise.exercise_template_id)?.primary_muscle_group ?? "other";
-        const workingSets = exerciseWorkingSets(exercise);
+        const resolved = resolvedFor(exercise);
+        const overrideWeight =
+          overrideMap.get(exercise.exercise_template_id)?.countsAs ?? 1;
+        const workingSets = exerciseWorkingSets(exercise) * overrideWeight;
         if (inCurrentWindow) {
-          const value = current.get(muscle) ?? { sets: 0, volumeKg: 0 };
-          value.sets += workingSets;
-          value.volumeKg += exerciseVolume(exercise);
-          current.set(muscle, value);
+          const value = current.get(resolved.primary) ?? {
+            directSets: 0,
+            indirectSets: 0,
+            volumeKg: 0,
+          };
+          value.directSets += workingSets;
+          value.volumeKg += exerciseVolume(exercise) * overrideWeight;
+          current.set(resolved.primary, value);
+          for (const secondary of resolved.secondary) {
+            const secondaryValue = current.get(secondary) ?? {
+              directSets: 0,
+              indirectSets: 0,
+              volumeKg: 0,
+            };
+            secondaryValue.indirectSets += workingSets * 0.5;
+            current.set(secondary, secondaryValue);
+          }
         } else {
-          previous.set(muscle, (previous.get(muscle) ?? 0) + workingSets);
+          previous.set(
+            resolved.primary,
+            (previous.get(resolved.primary) ?? 0) + workingSets,
+          );
         }
       }
     }
 
-    return [...current.entries()]
-      .map(([name, value]) => ({
-        name: titleCase(name),
-        sets: value.sets,
-        previousSets: previous.get(name) ?? 0,
+    return MUSCLES.map((muscle) => {
+      const value = current.get(muscle) ?? {
+        directSets: 0,
+        indirectSets: 0,
+        volumeKg: 0,
+      };
+      return {
+        key: muscle,
+        name: muscleLabel(muscle),
+        sets: value.directSets,
+        indirectSets: value.indirectSets,
+        previousSets: previous.get(muscle) ?? 0,
         volumeKg: Math.round(value.volumeKg),
-      }))
-      .sort((a, b) => b.sets - a.sets || a.name.localeCompare(b.name))
-      .slice(0, 10);
+      };
+    }).sort(
+      (a, b) =>
+        b.sets - a.sets ||
+        b.indirectSets - a.indirectSets ||
+        a.name.localeCompare(b.name),
+    );
   };
 
   const muscleWindows: Record<MuscleWindow, MuscleDistribution[]> = {
@@ -250,6 +321,17 @@ export function analyzeWorkoutHistory(
     '30': muscleDistribution(30),
   };
   const muscles = muscleWindows['7'];
+  const unmappedExercises = [
+    ...new Map(
+      sorted
+        .flatMap((workout) => workout.exercises)
+        .filter((exercise) => resolvedFor(exercise).unmapped)
+        .map((exercise) => [
+          exercise.exercise_template_id,
+          { id: exercise.exercise_template_id, title: exercise.title },
+        ]),
+    ).values(),
+  ].sort((a, b) => a.title.localeCompare(b.title));
 
   const histories = new Map<
     string,
@@ -261,7 +343,10 @@ export function analyzeWorkoutHistory(
       weightKg: number;
     }>
   >();
-  const exerciseTotals = new Map<string, { title: string; sessions: number; sets: number; volumeKg: number }>();
+  const exerciseTotals = new Map<
+    string,
+    { title: string; sessions: number; sets: number; volumeKg: number }
+  >();
   for (const workout of sorted) {
     for (const exercise of workout.exercises) {
       const working = exercise.sets
@@ -285,7 +370,9 @@ export function analyzeWorkoutHistory(
       exerciseTotals.set(exercise.exercise_template_id, total);
       const candidates = working
         .map(({ set, classified }) => ({ set, value: classified.e1rmKg }))
-        .filter((item) => item.value !== null && item.set.reps && item.set.weight_kg)
+        .filter(
+          (item) => item.value !== null && item.set.reps && item.set.weight_kg,
+        )
         .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
       if (!candidates.length) continue;
       const best = candidates[0];
@@ -313,12 +400,13 @@ export function analyzeWorkoutHistory(
       return {
         exercise: history[0].title,
         change: percentChange(points.at(-1)?.value ?? 0, points[0]?.value ?? 0),
-        bestKg: Math.round(Math.max(...history.map((item) => item.value)) * 10) / 10,
+        bestKg:
+          Math.round(Math.max(...history.map((item) => item.value)) * 10) / 10,
         points,
       };
     });
   const trend = strengthTrends[0] ?? {
-    exercise: "No weighted lift yet",
+    exercise: 'No weighted lift yet',
     change: 0,
     bestKg: 0,
     points: [],
@@ -343,7 +431,10 @@ export function analyzeWorkoutHistory(
   const records = [...histories.values()]
     .flatMap((history) => {
       const best = history
-        .filter((point) => daysAgo(point.date, nowMs) >= 0 && daysAgo(point.date, nowMs) <= 30)
+        .filter(
+          (point) =>
+            daysAgo(point.date, nowMs) >= 0 && daysAgo(point.date, nowMs) <= 30,
+        )
         .sort(
           (a, b) =>
             b.value - a.value ||
@@ -370,22 +461,40 @@ export function analyzeWorkoutHistory(
       const recent = [...history].reverse().slice(-6);
       return {
         exercise: totals.title,
-        muscle: titleCase(templateMap.get(id)?.primary_muscle_group ?? "other"),
+        muscle: muscleLabel(
+          resolveMuscles(
+            templateMap.get(id) ?? {
+              id,
+              title: totals.title,
+              is_custom: true,
+            },
+            overrideMap.get(id),
+          ).primary,
+        ),
         sessions: totals.sessions,
         workingSets: totals.sets,
         volumeKg: Math.round(totals.volumeKg),
-        bestE1rmKg: history.length ? Math.round(Math.max(...history.map((point) => point.value)) * 10) / 10 : 0,
-        change: recent.length >= 2 ? percentChange(recent.at(-1)?.value ?? 0, recent[0].value) : 0,
+        bestE1rmKg: history.length
+          ? Math.round(Math.max(...history.map((point) => point.value)) * 10) /
+            10
+          : 0,
+        change:
+          recent.length >= 2
+            ? percentChange(recent.at(-1)?.value ?? 0, recent[0].value)
+            : 0,
       };
     })
     .sort((a, b) => b.sessions - a.sessions)
     .slice(0, 20);
 
   const exerciseOptions = exerciseStats.slice(0, 10).map((stat) => {
-    const latestExercise = sorted.flatMap((workout) => workout.exercises).find((exercise) => exercise.title === stat.exercise);
-    const latestSets = latestExercise?.sets.filter(
-      (set) => classify(latestExercise, set).countsAsWorking > 0,
-    ) ?? [];
+    const latestExercise = sorted
+      .flatMap((workout) => workout.exercises)
+      .find((exercise) => exercise.title === stat.exercise);
+    const latestSets =
+      latestExercise?.sets.filter(
+        (set) => classify(latestExercise, set).countsAsWorking > 0,
+      ) ?? [];
     const representative = latestSets.find((set) => set.weight_kg && set.reps);
     return {
       name: stat.exercise,
@@ -393,53 +502,74 @@ export function analyzeWorkoutHistory(
       sets: Math.min(Math.max(latestSets.length, 2), 4),
       reps: representative?.reps ?? null,
       weightKg: representative?.weight_kg ?? null,
-      note: "Match the last clean effort; add a rep before load when possible.",
+      note: 'Match the last clean effort; add a rep before load when possible.',
     };
   });
 
   const activeWeeks = workloadWeeks.filter((week) => week.sessions > 0).length;
-  const consistencyPercent = Math.round((activeWeeks / workloadWeeks.length) * 100);
+  const consistencyPercent = Math.round(
+    (activeWeeks / workloadWeeks.length) * 100,
+  );
   const volumeChangePercent = percentChange(volume7d, previousVolume7d);
-  const lastGap = sorted[0] ? Math.round(daysAgo(sorted[0].start_time, nowMs)) : 0;
+  const lastGap = sorted[0]
+    ? Math.round(daysAgo(sorted[0].start_time, nowMs))
+    : 0;
   const plateau = Math.abs(trend.change) < 1.5;
   const biggestMuscle = [...muscles].sort((a, b) => b.sets - a.sets)[0];
-  const lowestMuscle = [...muscles].filter((muscle) => muscle.sets > 0).sort((a, b) => a.sets - b.sets)[0];
+  const lowestMuscle = [...muscles].sort((a, b) => a.sets - b.sets)[0];
   const weeklyReview = {
     label: `${formatShortDate(nowWeek.toISOString())}–${formatShortDate(new Date(nowWeek.getTime() + 6 * DAY).toISOString())}`,
     wins: [
-      `${recent7.length} session${recent7.length === 1 ? "" : "s"} completed with ${workingSets7d} direct working sets.`,
-      records.length ? `${records.length} estimated strength PR${records.length === 1 ? "" : "s"} appeared in the last 30 days.` : `${trend.exercise} is your clearest repeatable strength signal.`,
-      volumeChangePercent > 0 ? `Load-volume is up ${volumeChangePercent}% versus the previous seven days.` : `${activeWeeks} of the last eight weeks include training.`,
+      `${recent7.length} session${recent7.length === 1 ? '' : 's'} completed with ${workingSets7d} direct working sets.`,
+      records.length
+        ? `${records.length} estimated strength PR${records.length === 1 ? '' : 's'} appeared in the last 30 days.`
+        : `${trend.exercise} is your clearest repeatable strength signal.`,
+      volumeChangePercent > 0
+        ? `Load-volume is up ${volumeChangePercent}% versus the previous seven days.`
+        : `${activeWeeks} of the last eight weeks include training.`,
     ],
     watch: [
-      volumeChangePercent > 35 ? `Load-volume jumped ${volumeChangePercent}% week over week; monitor soreness and performance quality.` : `Weekly load-volume changed ${volumeChangePercent}% versus the prior week.`,
-      biggestMuscle && lowestMuscle ? `${biggestMuscle.name} received ${biggestMuscle.sets} direct sets versus ${lowestMuscle.name} at ${lowestMuscle.sets}; confirm that this matches the goal.` : "Muscle balance needs another complete week of data.",
+      volumeChangePercent > 35
+        ? `Load-volume jumped ${volumeChangePercent}% week over week; monitor soreness and performance quality.`
+        : `Weekly load-volume changed ${volumeChangePercent}% versus the prior week.`,
+      biggestMuscle && lowestMuscle
+        ? `${biggestMuscle.name} received ${biggestMuscle.sets} direct sets versus ${lowestMuscle.name} at ${lowestMuscle.sets}; confirm that this matches the goal.`
+        : 'Muscle balance needs another complete week of data.',
     ],
     nextSteps: [
-      plateau ? `Keep ${trend.exercise} load stable and earn one additional clean rep before increasing weight.` : `Use the current ${trend.exercise} trend as the progression anchor next week.`,
-      lastGap >= 7 ? `Resume with fewer hard sets after the ${lastGap}-day gap.` : "Keep the next session close to recent volume unless recovery says otherwise.",
+      plateau
+        ? `Keep ${trend.exercise} load stable and earn one additional clean rep before increasing weight.`
+        : `Use the current ${trend.exercise} trend as the progression anchor next week.`,
+      lastGap >= 7
+        ? `Resume with fewer hard sets after the ${lastGap}-day gap.`
+        : 'Keep the next session close to recent volume unless recovery says otherwise.',
     ],
   };
 
   return {
     analysis: createAnalysisMetadata(sorted, templates, now),
     connected: true,
-    sourceLabel: "Live Hevy data",
+    sourceLabel: 'Live Hevy data',
     syncMessage: `Analyzed ${sorted.length} recent workouts`,
     athleteName,
-    lastWorkout: sorted[0] ? `${sorted[0].title} · ${formatShortDate(sorted[0].start_time)}` : "No workouts found",
+    lastWorkout: sorted[0]
+      ? `${sorted[0].title} · ${formatShortDate(sorted[0].start_time)}`
+      : 'No workouts found',
     stats: {
       sessions30d: recent30.length,
       workingSets7d,
       hours30d: Math.round((totalMinutes / 60) * 10) / 10,
       activeWeeks,
       totalVolume30dKg: Math.round(totalVolume(recent30)),
-      avgSessionMinutes: recent30.length ? Math.round(totalMinutes / recent30.length) : 0,
+      avgSessionMinutes: recent30.length
+        ? Math.round(totalMinutes / recent30.length)
+        : 0,
       consistencyPercent,
       volumeChangePercent,
     },
     muscles,
     muscleWindows,
+    unmappedExercises,
     trend: {
       exercise: trend.exercise,
       change: trend.change,
@@ -467,9 +597,9 @@ export function analyzeWorkoutHistory(
       volumeKg: Math.round(workoutVolume(workout)),
       exercises: workout.exercises.map((exercise) => ({
         title: exercise.title,
-        muscle: titleCase(templateMap.get(exercise.exercise_template_id)?.primary_muscle_group ?? "other"),
+        muscle: muscleLabel(resolvedFor(exercise).primary),
         sets: exercise.sets.map((set) => ({
-          type: set.type ?? "normal",
+          type: set.type ?? 'normal',
           weightKg: set.weight_kg ?? null,
           reps: set.reps ?? null,
           rpe: set.rpe ?? null,
@@ -480,120 +610,125 @@ export function analyzeWorkoutHistory(
     weeklyReview,
     insights: {
       plateau: plateau
-        ? `${trend.exercise} is effectively flat across ${trend.points.length} comparable sessions (${trend.change >= 0 ? "+" : ""}${trend.change}%). Check effort and technique before adding load.`
-        : `${trend.exercise} is trending ${trend.change > 0 ? "up" : "down"} ${Math.abs(trend.change)}% across the visible sessions.`,
-      return: lastGap >= 14 ? `Your last logged session was ${lastGap} days ago. Reduce working sets and leave several reps in reserve for the first week back.` : `Your latest logged session was ${lastGap} day${lastGap === 1 ? "" : "s"} ago, so the data does not indicate a long layoff.`,
-      progress: `${trend.exercise} is the clearest current signal at ${trend.change >= 0 ? "+" : ""}${trend.change}%. Progress repeatable working sets, not one unusually hard top set.`,
+        ? `${trend.exercise} is effectively flat across ${trend.points.length} comparable sessions (${trend.change >= 0 ? '+' : ''}${trend.change}%). Check effort and technique before adding load.`
+        : `${trend.exercise} is trending ${trend.change > 0 ? 'up' : 'down'} ${Math.abs(trend.change)}% across the visible sessions.`,
+      return:
+        lastGap >= 14
+          ? `Your last logged session was ${lastGap} days ago. Reduce working sets and leave several reps in reserve for the first week back.`
+          : `Your latest logged session was ${lastGap} day${lastGap === 1 ? '' : 's'} ago, so the data does not indicate a long layoff.`,
+      progress: `${trend.exercise} is the clearest current signal at ${trend.change >= 0 ? '+' : ''}${trend.change}%. Progress repeatable working sets, not one unusually hard top set.`,
     },
   };
 }
 
-function demoData(message = "Add HEVY_API_KEY to switch from sample data"): DashboardData {
+function demoData(
+  message = 'Add HEVY_API_KEY to switch from sample data',
+): DashboardData {
   const points = [91.7, 92.5, 94.2, 94.5, 95.3, 96.1].map((value, index) => ({
     date: `2026-08-${index + 1}`,
     value,
-    label: ["Jul 29", "Aug 5", "Aug 14", "Aug 22", "Aug 31", "Sep 8"][index],
+    label: ['Jul 29', 'Aug 5', 'Aug 14', 'Aug 22', 'Aug 31', 'Sep 8'][index],
   }));
   const exerciseOptions: ExerciseOption[] = [
-    ["Incline Bench Press", "Chest", 3, 8, 65],
-    ["Chest Supported Row", "Upper Back", 3, 10, 55],
-    ["Cable Lateral Raise", "Shoulders", 3, 12, 9],
-    ["Lat Pulldown", "Lats", 3, 9, 59],
-    ["Cable Triceps Extension", "Triceps", 2, 12, 27],
-    ["Incline Dumbbell Curl", "Biceps", 2, 10, 12],
+    ['Incline Bench Press', 'Chest', 3, 8, 65],
+    ['Chest Supported Row', 'Upper Back', 3, 10, 55],
+    ['Cable Lateral Raise', 'Shoulders', 3, 12, 9],
+    ['Lat Pulldown', 'Lats', 3, 9, 59],
+    ['Cable Triceps Extension', 'Triceps', 2, 12, 27],
+    ['Incline Dumbbell Curl', 'Biceps', 2, 10, 12],
   ].map(([name, muscle, sets, reps, weightKg]) => ({
     name: String(name),
     muscle: String(muscle),
     sets: Number(sets),
     reps: Number(reps),
     weightKg: Number(weightKg),
-    note: "Match the last clean effort; add a rep before load.",
+    note: 'Match the last clean effort; add a rep before load.',
   }));
   const sampleExercises = [
     {
-      title: "Bench Press (Barbell)",
-      muscle: "Chest",
+      title: 'Bench Press (Barbell)',
+      muscle: 'Chest',
       sets: [
-        { type: "warmup", weightKg: 40, reps: 10, rpe: null },
-        { type: "normal", weightKg: 80, reps: 6, rpe: 8 },
-        { type: "normal", weightKg: 80, reps: 6, rpe: 8.5 },
-        { type: "normal", weightKg: 77.5, reps: 7, rpe: 9 },
+        { type: 'warmup', weightKg: 40, reps: 10, rpe: null },
+        { type: 'normal', weightKg: 80, reps: 6, rpe: 8 },
+        { type: 'normal', weightKg: 80, reps: 6, rpe: 8.5 },
+        { type: 'normal', weightKg: 77.5, reps: 7, rpe: 9 },
       ],
     },
     {
-      title: "Chest Supported Row",
-      muscle: "Upper Back",
+      title: 'Chest Supported Row',
+      muscle: 'Upper Back',
       sets: [
-        { type: "normal", weightKg: 55, reps: 10, rpe: 8 },
-        { type: "normal", weightKg: 55, reps: 10, rpe: 8 },
-        { type: "normal", weightKg: 55, reps: 9, rpe: 9 },
+        { type: 'normal', weightKg: 55, reps: 10, rpe: 8 },
+        { type: 'normal', weightKg: 55, reps: 10, rpe: 8 },
+        { type: 'normal', weightKg: 55, reps: 9, rpe: 9 },
       ],
     },
     {
-      title: "Cable Lateral Raise",
-      muscle: "Shoulders",
+      title: 'Cable Lateral Raise',
+      muscle: 'Shoulders',
       sets: [
-        { type: "normal", weightKg: 9, reps: 13, rpe: 8 },
-        { type: "normal", weightKg: 9, reps: 12, rpe: 9 },
+        { type: 'normal', weightKg: 9, reps: 13, rpe: 8 },
+        { type: 'normal', weightKg: 9, reps: 12, rpe: 9 },
       ],
     },
   ];
   const calendarWorkouts: CalendarWorkout[] = [
     {
-      id: "sample-upper-a",
-      title: "Upper A",
-      date: "2026-09-08",
-      time: "6:10 PM",
+      id: 'sample-upper-a',
+      title: 'Upper A',
+      date: '2026-09-08',
+      time: '6:10 PM',
       durationMinutes: 54,
       workingSets: 8,
       volumeKg: 7420,
       exercises: sampleExercises,
     },
     {
-      id: "sample-lower-b",
-      title: "Lower B",
-      date: "2026-09-06",
-      time: "11:20 AM",
+      id: 'sample-lower-b',
+      title: 'Lower B',
+      date: '2026-09-06',
+      time: '11:20 AM',
       durationMinutes: 62,
       workingSets: 7,
       volumeKg: 9860,
       exercises: [
         {
-          title: "Squat (Barbell)",
-          muscle: "Quadriceps",
+          title: 'Squat (Barbell)',
+          muscle: 'Quadriceps',
           sets: [
-            { type: "warmup", weightKg: 70, reps: 6, rpe: null },
-            { type: "normal", weightKg: 118, reps: 5, rpe: 8 },
-            { type: "normal", weightKg: 118, reps: 5, rpe: 8.5 },
-            { type: "normal", weightKg: 115, reps: 6, rpe: 9 },
+            { type: 'warmup', weightKg: 70, reps: 6, rpe: null },
+            { type: 'normal', weightKg: 118, reps: 5, rpe: 8 },
+            { type: 'normal', weightKg: 118, reps: 5, rpe: 8.5 },
+            { type: 'normal', weightKg: 115, reps: 6, rpe: 9 },
           ],
         },
         {
-          title: "Romanian Deadlift",
-          muscle: "Hamstrings",
+          title: 'Romanian Deadlift',
+          muscle: 'Hamstrings',
           sets: [
-            { type: "normal", weightKg: 100, reps: 8, rpe: 8 },
-            { type: "normal", weightKg: 100, reps: 8, rpe: 8.5 },
-            { type: "normal", weightKg: 100, reps: 7, rpe: 9 },
+            { type: 'normal', weightKg: 100, reps: 8, rpe: 8 },
+            { type: 'normal', weightKg: 100, reps: 8, rpe: 8.5 },
+            { type: 'normal', weightKg: 100, reps: 7, rpe: 9 },
           ],
         },
       ],
     },
     {
-      id: "sample-pull",
-      title: "Pull",
-      date: "2026-09-04",
-      time: "5:45 PM",
+      id: 'sample-pull',
+      title: 'Pull',
+      date: '2026-09-04',
+      time: '5:45 PM',
       durationMinutes: 48,
       workingSets: 8,
       volumeKg: 6250,
       exercises: sampleExercises.slice(1),
     },
     {
-      id: "sample-upper-b",
-      title: "Upper B",
-      date: "2026-09-01",
-      time: "6:05 PM",
+      id: 'sample-upper-b',
+      title: 'Upper B',
+      date: '2026-09-01',
+      time: '6:05 PM',
       durationMinutes: 58,
       workingSets: 8,
       volumeKg: 8110,
@@ -601,15 +736,17 @@ function demoData(message = "Add HEVY_API_KEY to switch from sample data"): Dash
     },
   ];
   const muscles: MuscleDistribution[] = [
-    ["Chest", 10, 8, 8240],
-    ["Upper Back", 9, 9, 7120],
-    ["Quadriceps", 8, 6, 9630],
-    ["Shoulders", 7, 8, 2980],
-    ["Hamstrings", 5, 5, 4310],
-    ["Biceps", 4, 4, 1240],
-  ].map(([name, sets, previousSets, volumeKg]) => ({
+    ['chest_mid_lower', 'Chest', 10, 8, 8240],
+    ['upper_back', 'Upper Back', 9, 9, 7120],
+    ['quads', 'Quadriceps', 8, 6, 9630],
+    ['delts_side', 'Shoulders', 7, 8, 2980],
+    ['hamstrings', 'Hamstrings', 5, 5, 4310],
+    ['biceps', 'Biceps', 4, 4, 1240],
+  ].map(([key, name, sets, previousSets, volumeKg]) => ({
+    key: key as Muscle,
     name: String(name),
     sets: Number(sets),
+    indirectSets: 0,
     previousSets: Number(previousSets),
     volumeKg: Number(volumeKg),
   }));
@@ -623,10 +760,10 @@ function demoData(message = "Add HEVY_API_KEY to switch from sample data"): Dash
   return {
     analysis: createAnalysisMetadata([], [], new Date()),
     connected: false,
-    sourceLabel: "Sample workspace",
+    sourceLabel: 'Sample workspace',
     syncMessage: message,
-    athleteName: "Athlete",
-    lastWorkout: "Upper A · Sep 8",
+    athleteName: 'Athlete',
+    lastWorkout: 'Upper A · Sep 8',
     stats: {
       sessions30d: 14,
       workingSets7d: 46,
@@ -643,11 +780,12 @@ function demoData(message = "Add HEVY_API_KEY to switch from sample data"): Dash
       '14': scaleMuscles(1.9, 1.9),
       '30': scaleMuscles(4, 4),
     },
-    trend: { exercise: "Bench Press (Barbell)", change: 4.8, points },
+    unmappedExercises: [],
+    trend: { exercise: 'Bench Press (Barbell)', change: 4.8, points },
     strengthTrends: [
-      { exercise: "Bench Press (Barbell)", change: 4.8, bestKg: 96.1, points },
+      { exercise: 'Bench Press (Barbell)', change: 4.8, bestKg: 96.1, points },
       {
-        exercise: "Squat (Barbell)",
+        exercise: 'Squat (Barbell)',
         change: 3.2,
         bestKg: 138.4,
         points: points.map((point) => ({
@@ -656,7 +794,7 @@ function demoData(message = "Add HEVY_API_KEY to switch from sample data"): Dash
         })),
       },
       {
-        exercise: "Lat Pulldown",
+        exercise: 'Lat Pulldown',
         change: 1.7,
         bestKg: 74.2,
         points: points.map((point) => ({
@@ -665,7 +803,16 @@ function demoData(message = "Add HEVY_API_KEY to switch from sample data"): Dash
         })),
       },
     ],
-    workloadWeeks: ["Jul 20", "Jul 27", "Aug 3", "Aug 10", "Aug 17", "Aug 24", "Aug 31", "Sep 7"].map((label, index) => ({
+    workloadWeeks: [
+      'Jul 20',
+      'Jul 27',
+      'Aug 3',
+      'Aug 10',
+      'Aug 17',
+      'Aug 24',
+      'Aug 31',
+      'Sep 7',
+    ].map((label, index) => ({
       label,
       sets: [38, 44, 41, 48, 45, 42, 50, 46][index],
       volumeKg: [18000, 21000, 19800, 23600, 22100, 20700, 24100, 22900][index],
@@ -673,15 +820,15 @@ function demoData(message = "Add HEVY_API_KEY to switch from sample data"): Dash
     })),
     records: [
       {
-        exercise: "Bench Press (Barbell)",
-        date: "Sep 8",
+        exercise: 'Bench Press (Barbell)',
+        date: 'Sep 8',
         valueKg: 96.1,
         reps: 6,
         weightKg: 80,
       },
       {
-        exercise: "Squat (Barbell)",
-        date: "Sep 6",
+        exercise: 'Squat (Barbell)',
+        date: 'Sep 6',
         valueKg: 138.4,
         reps: 5,
         weightKg: 118,
@@ -689,8 +836,8 @@ function demoData(message = "Add HEVY_API_KEY to switch from sample data"): Dash
     ],
     exerciseStats: [
       {
-        exercise: "Bench Press (Barbell)",
-        muscle: "Chest",
+        exercise: 'Bench Press (Barbell)',
+        muscle: 'Chest',
         sessions: 14,
         workingSets: 48,
         volumeKg: 28200,
@@ -698,8 +845,8 @@ function demoData(message = "Add HEVY_API_KEY to switch from sample data"): Dash
         change: 4.8,
       },
       {
-        exercise: "Squat (Barbell)",
-        muscle: "Quadriceps",
+        exercise: 'Squat (Barbell)',
+        muscle: 'Quadriceps',
         sessions: 11,
         workingSets: 42,
         volumeKg: 39800,
@@ -707,8 +854,8 @@ function demoData(message = "Add HEVY_API_KEY to switch from sample data"): Dash
         change: 3.2,
       },
       {
-        exercise: "Lat Pulldown",
-        muscle: "Lats",
+        exercise: 'Lat Pulldown',
+        muscle: 'Lats',
         sessions: 10,
         workingSets: 36,
         volumeKg: 18400,
@@ -716,8 +863,8 @@ function demoData(message = "Add HEVY_API_KEY to switch from sample data"): Dash
         change: 1.7,
       },
       {
-        exercise: "Romanian Deadlift",
-        muscle: "Hamstrings",
+        exercise: 'Romanian Deadlift',
+        muscle: 'Hamstrings',
         sessions: 9,
         workingSets: 31,
         volumeKg: 27600,
@@ -727,33 +874,33 @@ function demoData(message = "Add HEVY_API_KEY to switch from sample data"): Dash
     ],
     recentWorkouts: [
       {
-        title: "Upper A",
-        date: "Sep 8",
-        duration: "54 min",
+        title: 'Upper A',
+        date: 'Sep 8',
+        duration: '54 min',
         exercises: 6,
         workingSets: 18,
         volumeKg: 7420,
       },
       {
-        title: "Lower B",
-        date: "Sep 6",
-        duration: "62 min",
+        title: 'Lower B',
+        date: 'Sep 6',
+        duration: '62 min',
         exercises: 7,
         workingSets: 20,
         volumeKg: 9860,
       },
       {
-        title: "Pull",
-        date: "Sep 4",
-        duration: "48 min",
+        title: 'Pull',
+        date: 'Sep 4',
+        duration: '48 min',
         exercises: 6,
         workingSets: 17,
         volumeKg: 6250,
       },
       {
-        title: "Upper B",
-        date: "Sep 1",
-        duration: "58 min",
+        title: 'Upper B',
+        date: 'Sep 1',
+        duration: '58 min',
         exercises: 7,
         workingSets: 21,
         volumeKg: 8110,
@@ -762,15 +909,28 @@ function demoData(message = "Add HEVY_API_KEY to switch from sample data"): Dash
     calendarWorkouts,
     exerciseOptions,
     weeklyReview: {
-      label: "Sep 7–Sep 13",
-      wins: ["Four sessions completed with 46 direct working sets.", "Two estimated strength PRs appeared in the last 30 days.", "Load-volume is up 8.4% week over week."],
-      watch: ["Shoulder volume fell slightly versus last week.", "Lower-body sessions are running longer than average."],
-      nextSteps: ["Keep bench load stable and earn one clean rep.", "Place the lower-body compound first next session."],
+      label: 'Sep 7–Sep 13',
+      wins: [
+        'Four sessions completed with 46 direct working sets.',
+        'Two estimated strength PRs appeared in the last 30 days.',
+        'Load-volume is up 8.4% week over week.',
+      ],
+      watch: [
+        'Shoulder volume fell slightly versus last week.',
+        'Lower-body sessions are running longer than average.',
+      ],
+      nextSteps: [
+        'Keep bench load stable and earn one clean rep.',
+        'Place the lower-body compound first next session.',
+      ],
     },
     insights: {
-      plateau: "Bench press is up 4.8% across six comparable sessions; hold load and look for one more clean rep.",
-      return: "After a three-week break, reduce set count, keep several reps in reserve, and rebuild gradually.",
-      progress: "Bench press is the clearest upward signal. Lateral raise is the next simple rep-progression opportunity.",
+      plateau:
+        'Bench press is up 4.8% across six comparable sessions; hold load and look for one more clean rep.',
+      return:
+        'After a three-week break, reduce set count, keep several reps in reserve, and rebuild gradually.',
+      progress:
+        'Bench press is the clearest upward signal. Lateral raise is the next simple rep-progression opportunity.',
     },
   };
 }
@@ -785,10 +945,10 @@ function unavailableData(message: string): DashboardData {
   return {
     analysis: createAnalysisMetadata([], [], new Date()),
     connected: false,
-    sourceLabel: "Hevy unavailable",
+    sourceLabel: 'Hevy unavailable',
     syncMessage: message,
-    athleteName: "Athlete",
-    lastWorkout: "Unavailable — sync Hevy to load verified history",
+    athleteName: 'Athlete',
+    lastWorkout: 'Unavailable — sync Hevy to load verified history',
     stats: {
       sessions30d: 0,
       workingSets7d: 0,
@@ -801,7 +961,8 @@ function unavailableData(message: string): DashboardData {
     },
     muscles: [],
     muscleWindows: { '7': [], '14': [], '30': [] },
-    trend: { exercise: "No verified lift data", change: 0, points: [] },
+    unmappedExercises: [],
+    trend: { exercise: 'No verified lift data', change: 0, points: [] },
     strengthTrends: [],
     workloadWeeks: emptyWeeks,
     records: [],
@@ -810,33 +971,42 @@ function unavailableData(message: string): DashboardData {
     calendarWorkouts: [],
     exerciseOptions: [],
     weeklyReview: {
-      label: "No verified data",
+      label: 'No verified data',
       wins: [],
-      watch: ["Hevy history is unavailable, so no workout-specific coaching is safe yet."],
-      nextSteps: ["Retry the Hevy sync before asking for progress feedback."],
+      watch: [
+        'Hevy history is unavailable, so no workout-specific coaching is safe yet.',
+      ],
+      nextSteps: ['Retry the Hevy sync before asking for progress feedback.'],
     },
     insights: {
-      plateau: "No verified Hevy data is available to assess a plateau.",
-      return: "No verified Hevy data is available to assess a return plan.",
-      progress: "No verified Hevy data is available to assess progress.",
+      plateau: 'No verified Hevy data is available to assess a plateau.',
+      return: 'No verified Hevy data is available to assess a return plan.',
+      progress: 'No verified Hevy data is available to assess progress.',
     },
   };
 }
 
-export async function getDashboardData(userId = 'local-owner'): Promise<DashboardData> {
+export async function getDashboardData(
+  userId = 'local-owner',
+): Promise<DashboardData> {
   const apiKey = process.env.HEVY_API_KEY;
   try {
-    const { getHevySyncState, listStoredHevyWorkouts, listStoredTemplates } = await import('./hevy-repo');
-    const [workouts, templateRows, syncState] = await Promise.all([
+    const { getHevySyncState, listStoredHevyWorkouts, listStoredTemplates } =
+      await import('./hevy-repo');
+    const { listMuscleOverrides } = await import('./muscle-repo');
+    const [workouts, templateRows, syncState, overrides] = await Promise.all([
       listStoredHevyWorkouts(userId, { limit: 5_000 }),
       listStoredTemplates(userId),
       getHevySyncState(userId),
+      listMuscleOverrides(userId),
     ]);
     if (workouts.length) {
       const dashboard = analyzeWorkoutHistory(
         workouts,
         templateRows.map(deserializeHevyTemplate),
         'Athlete',
+        new Date(),
+        overrides,
       );
       const progress = syncState?.lastError
         ? ' · latest sync needs attention'
@@ -859,7 +1029,8 @@ export async function getDashboardData(userId = 'local-owner'): Promise<Dashboar
         : 'Hevy is connected. Select sync to import your training history.',
     );
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "Unknown storage error";
+    const reason =
+      error instanceof Error ? error.message : 'Unknown storage error';
     return unavailableData(`Hevy connection needs attention: ${reason}`);
   }
 }
