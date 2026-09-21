@@ -1,4 +1,4 @@
-import { getDatabase } from '@/db';
+import { getDatabase } from '../db';
 import type { ExerciseTemplate, HevyWorkout } from './hevy-types';
 import {
   deserializeHevyWorkout,
@@ -141,7 +141,7 @@ export async function listStoredWorkouts(
     conditions.push('start_time <= ?');
     bindings.push(options.until);
   }
-  const limit = Math.min(Math.max(options.limit ?? 250, 1), 1_000);
+  const limit = Math.min(Math.max(options.limit ?? 250, 1), 5_000);
   bindings.push(limit);
 
   const result = await getDatabase()
@@ -216,6 +216,16 @@ export async function listStoredTemplates(userId: string) {
     .bind(userId)
     .all<TemplateRow>();
   return result.results.map(mapTemplate);
+}
+
+export async function countStoredWorkouts(userId: string) {
+  const row = await getDatabase()
+    .prepare(
+      'SELECT COUNT(*) AS count FROM hevy_workouts WHERE user_id = ? AND deleted = 0',
+    )
+    .bind(userId)
+    .first<{ count: number }>();
+  return Number(row?.count ?? 0);
 }
 
 export async function getHevySyncState(userId: string) {

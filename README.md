@@ -51,7 +51,9 @@ coverage metadata so future calculation changes can be audited and re-derived.
 Hevy workouts are stored twice: a raw JSON snapshot for faithful re-analysis and
 normalized workout, set, and template rows for fast bounded queries. The typed
 repository in `lib/hevy-repo.ts` owns writes to those tables. Dashboard reads stay
-on the live-data path until the incremental sync is complete and verified.
+on the local store; the Hevy sync endpoint imports full history in resumable,
+bounded chunks and then applies update/delete events. Chat and program requests
+never poll Hevy directly. The header sync action refreshes stale data on demand.
 
 ## Safety boundaries
 

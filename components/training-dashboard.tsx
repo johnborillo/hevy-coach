@@ -327,6 +327,8 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   const [programError, setProgramError] = useState('');
   const [programActionBusy, setProgramActionBusy] = useState(false);
   const [programActionError, setProgramActionError] = useState('');
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncError, setSyncError] = useState('');
   const [editingProgramId, setEditingProgramId] = useState<string | null>(null);
   const [adjustingProgramId, setAdjustingProgramId] = useState<string | null>(
     null,
@@ -416,6 +418,36 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
             ? 'asc'
             : 'desc',
     }));
+  }
+
+  async function syncNow() {
+    setSyncBusy(true);
+    setSyncError('');
+    try {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const response = await fetch('/api/hevy/sync', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ force: attempt === 0 }),
+        });
+        const result = await readJson<{
+          error?: string;
+          status?: 'syncing' | 'current';
+        }>(response);
+        if (!response.ok) {
+          throw new Error(result.error || 'Hevy sync failed.');
+        }
+        if (result.status === 'current') {
+          window.location.reload();
+          return;
+        }
+      }
+      throw new Error('The history import needs another sync pass.');
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : 'Hevy sync failed.');
+    } finally {
+      setSyncBusy(false);
+    }
   }
 
   function changeCoachSource(source: CoachSource | null) {
@@ -890,10 +922,16 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
             </h1>
           </div>
           <div className="topbar-actions">
-            <div className="sync-copy">
-              <RefreshCw />
-              <span>{data.syncMessage}</span>
-            </div>
+            <button
+              className="sync-copy sync-copy-button"
+              type="button"
+              onClick={syncNow}
+              disabled={syncBusy}
+              title={syncError || 'Synchronize your Hevy history'}
+            >
+              <RefreshCw className={syncBusy ? 'spinning' : ''} />
+              <span>{syncBusy ? 'Syncing Hevy history…' : syncError || data.syncMessage}</span>
+            </button>
           </div>
         </header>
 
@@ -901,10 +939,14 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
           <section className="setup-banner">
             <div>
               <span className="setup-kicker">Connection needs attention</span>
-              <strong>Showing sample training data.</strong>
+              <strong>
+                {data.sourceLabel === 'Sample workspace'
+                  ? 'Showing sample training data.'
+                  : 'Your training store is waiting for a verified sync.'}
+              </strong>
               <p>{data.syncMessage}</p>
             </div>
-            <code>HEVY_API_KEY</code>
+            <code>{data.sourceLabel === 'Sample workspace' ? 'HEVY_API_KEY' : 'SYNC HEVY'}</code>
           </section>
         )}
 

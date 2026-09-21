@@ -251,6 +251,34 @@ h2 {
   flex: none;
 }
 
+.sync-copy-button {
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sync-copy-button:hover:not(:disabled) {
+  background: rgba(16, 23, 16, 0.06);
+  color: var(--ink);
+}
+
+.sync-copy-button:disabled {
+  cursor: wait;
+}
+
+.sync-copy-button .spinning {
+  animation: sync-spin 0.8s linear infinite;
+}
+
+@keyframes sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .setup-banner {
   display: flex;
   align-items: center;
