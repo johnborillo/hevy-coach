@@ -946,7 +946,19 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
               </strong>
               <p>{data.syncMessage}</p>
             </div>
-            <code>{data.sourceLabel === 'Sample workspace' ? 'HEVY_API_KEY' : 'SYNC HEVY'}</code>
+            {data.sourceLabel === 'Sample workspace' ? (
+              <code>HEVY_API_KEY</code>
+            ) : (
+              <button
+                className="setup-sync-button"
+                type="button"
+                onClick={syncNow}
+                disabled={syncBusy}
+              >
+                <RefreshCw className={syncBusy ? 'spinning' : ''} />
+                {syncBusy ? 'SYNCING…' : syncError || 'SYNC HEVY'}
+              </button>
+            )}
           </section>
         )}
 
