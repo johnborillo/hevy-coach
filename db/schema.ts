@@ -198,3 +198,15 @@ export const muscleOverrides = sqliteTable(
     primaryKey({ columns: [table.userId, table.exerciseTemplateId] }),
   ],
 );
+
+export const progressionStates = sqliteTable(
+  'progression_states',
+  {
+    userId: text('user_id').notNull(),
+    slotOrTemplateId: text('slot_or_template_id').notNull(),
+    computedAt: text('computed_at').notNull(),
+    analysisVersion: integer('analysis_version').notNull(),
+    stateJson: text('state_json').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.slotOrTemplateId] })],
+);

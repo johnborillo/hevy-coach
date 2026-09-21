@@ -176,7 +176,7 @@ function SummaryDetails({ field, data, unit }: { field: string; data: DashboardD
             <strong>{exercise.exercise}</strong>
             <small>
               {exercise.workingSets} sets · {exercise.bestE1rmKg ? `${displayWeight(exercise.bestE1rmKg, unit)} e1RM` : "No e1RM"} · {exercise.change >= 0 ? "+" : ""}
-              {exercise.change}%
+              {exercise.change}% · {exercise.progressionStatus.replaceAll("_", " ")}
             </small>
           </div>
         ))}

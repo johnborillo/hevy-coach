@@ -323,6 +323,11 @@ function compactContext(profile: AthleteProfile, dashboard: DashboardData) {
         loadVolume: displayWeight(exercise.volumeKg),
         bestEstimated1Rm: displayWeight(exercise.bestE1rmKg),
         changePercent: exercise.change,
+        progressionStatus: exercise.progressionStatus,
+        recommendation: exercise.progressionRecommendation,
+        rationale: exercise.progressionRationale,
+        repsAtModalLoad: exercise.repsAtModalLoad,
+        lastSetRpe: exercise.lastSetRpe,
       })),
       recentWorkouts: dashboard.recentWorkouts.map((workout) => ({
         ...workout,
