@@ -180,3 +180,21 @@ export const hevySyncState = sqliteTable('hevy_sync_state', {
   lastSyncAt: text('last_sync_at'),
   lastError: text('last_error'),
 });
+
+export const muscleOverrides = sqliteTable(
+  'muscle_overrides',
+  {
+    userId: text('user_id').notNull(),
+    exerciseTemplateId: text('exercise_template_id').notNull(),
+    primaryMuscle: text('primary_muscle').notNull(),
+    secondaryMusclesJson: text('secondary_muscles_json')
+      .notNull()
+      .default('[]'),
+    slotId: text('slot_id'),
+    countsAs: real('counts_as').notNull().default(1),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.exerciseTemplateId] }),
+  ],
+);
