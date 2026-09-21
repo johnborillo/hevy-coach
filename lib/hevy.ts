@@ -7,6 +7,7 @@ import type {
   HevySet,
   HevyWorkout,
 } from './hevy-types';
+import { deserializeHevyTemplate } from './hevy-store';
 
 export type TrendPoint = { date: string; value: number; label: string };
 
@@ -117,7 +118,6 @@ export type DashboardData = {
   insights: { plateau: string; return: string; progress: string };
 };
 
-const API_ROOT = "https://api.hevyapp.com/v1";
 const DAY = 86_400_000;
 
 function isWorkingSet(set: HevySet) {
@@ -174,39 +174,6 @@ function startOfWeek(date: Date) {
   copy.setHours(0, 0, 0, 0);
   copy.setDate(copy.getDate() - day);
   return copy;
-}
-
-async function hevyGet<T>(path: string, apiKey: string): Promise<T> {
-  const response = await fetch(`${API_ROOT}${path}`, {
-    headers: { "api-key": apiKey },
-    cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new Error(`Hevy returned ${response.status}`);
-  return response.json() as Promise<T>;
-}
-
-async function fetchWorkouts(apiKey: string) {
-  const first = await hevyGet<{ page_count: number; workouts: HevyWorkout[] }>("/workouts?page=1&pageSize=10", apiKey);
-  const workouts = [...first.workouts];
-  for (let page = 2; page <= Math.min(first.page_count, 12); page += 1) {
-    const result = await hevyGet<{ workouts: HevyWorkout[] }>(`/workouts?page=${page}&pageSize=10`, apiKey);
-    workouts.push(...result.workouts);
-  }
-  return workouts;
-}
-
-async function fetchTemplates(apiKey: string) {
-  const first = await hevyGet<{
-    page_count: number;
-    exercise_templates: ExerciseTemplate[];
-  }>("/exercise_templates?page=1&pageSize=100", apiKey);
-  const templates = [...first.exercise_templates];
-  for (let page = 2; page <= Math.min(first.page_count, 8); page += 1) {
-    const result = await hevyGet<{ exercise_templates: ExerciseTemplate[] }>(`/exercise_templates?page=${page}&pageSize=100`, apiKey);
-    templates.push(...result.exercise_templates);
-  }
-  return templates;
 }
 
 export function analyzeWorkoutHistory(
@@ -836,14 +803,43 @@ function unavailableData(message: string): DashboardData {
   };
 }
 
-export async function getDashboardData(): Promise<DashboardData> {
+export async function getDashboardData(userId = 'local-owner'): Promise<DashboardData> {
   const apiKey = process.env.HEVY_API_KEY;
-  if (!apiKey) return demoData();
   try {
-    const [workouts, templates, user] = await Promise.all([fetchWorkouts(apiKey), fetchTemplates(apiKey), hevyGet<{ data?: { name?: string }; name?: string }>("/user/info", apiKey)]);
-    return analyzeWorkoutHistory(workouts, templates, user.data?.name ?? user.name ?? "Athlete");
+    const { getHevySyncState, listStoredHevyWorkouts, listStoredTemplates } = await import('./hevy-repo');
+    const [workouts, templateRows, syncState] = await Promise.all([
+      listStoredHevyWorkouts(userId, { limit: 5_000 }),
+      listStoredTemplates(userId),
+      getHevySyncState(userId),
+    ]);
+    if (workouts.length) {
+      const dashboard = analyzeWorkoutHistory(
+        workouts,
+        templateRows.map(deserializeHevyTemplate),
+        'Athlete',
+      );
+      const progress = syncState?.lastError
+        ? ' · latest sync needs attention'
+        : syncState?.fullSyncCompletedAt
+          ? ''
+          : syncState?.fullSyncPageCount
+            ? ` · importing page ${syncState.fullSyncNextPage} of ${syncState.fullSyncPageCount}`
+            : ' · importing full history';
+      return {
+        ...dashboard,
+        sourceLabel: 'Synchronized Hevy history',
+        syncMessage: `Analyzed ${workouts.length} workouts${progress}`,
+      };
+    }
+
+    if (!apiKey) return demoData();
+    return unavailableData(
+      syncState?.lastError
+        ? `Hevy sync needs attention: ${syncState.lastError}`
+        : 'Hevy is connected. Select sync to import your training history.',
+    );
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "Unknown sync error";
+    const reason = error instanceof Error ? error.message : "Unknown storage error";
     return unavailableData(`Hevy connection needs attention: ${reason}`);
   }
 }

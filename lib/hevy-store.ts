@@ -146,3 +146,24 @@ export function deserializeSecondaryMuscles(
     ? value.filter((item): item is string => typeof item === 'string')
     : [];
 }
+
+export function deserializeHevyTemplate(
+  row: Pick<
+    StoredHevyTemplate,
+    | 'id'
+    | 'title'
+    | 'primaryMuscle'
+    | 'secondaryMusclesJson'
+    | 'equipment'
+    | 'isCustom'
+  >,
+): ExerciseTemplate {
+  return {
+    id: row.id,
+    title: row.title,
+    primary_muscle_group: row.primaryMuscle ?? undefined,
+    secondary_muscle_groups: deserializeSecondaryMuscles(row),
+    equipment: row.equipment ?? undefined,
+    is_custom: Boolean(row.isCustom),
+  };
+}

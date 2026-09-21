@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     const userMessage = await saveMessage(userId, conversationId, 'user', content);
     const [profile, dashboard, history] = await Promise.all([
       getProfile(userId),
-      getDashboardData(),
+      getDashboardData(userId),
       listMessages(userId, conversationId),
     ]);
     let answer: { content: string; model: string };

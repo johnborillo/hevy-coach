@@ -165,7 +165,7 @@ export async function POST(request: Request) {
     const userId = requestUserId(request.headers);
     const [profile, dashboard] = await Promise.all([
       getProfile(userId),
-      getDashboardData(),
+      getDashboardData(userId),
     ]);
     let generated: Omit<TrainingProgram, 'id' | 'createdAt'> | null = null;
     try {
@@ -224,7 +224,7 @@ export async function PATCH(request: Request) {
       }
       const [profile, dashboard] = await Promise.all([
         getProfile(userId),
-        getDashboardData(),
+        getDashboardData(userId),
       ]);
       const candidate = await adjustProgramWithCoach(
         profile,
@@ -283,4 +283,3 @@ export async function DELETE(request: Request) {
     );
   }
 }
-
