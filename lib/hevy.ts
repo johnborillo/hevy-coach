@@ -1,3 +1,13 @@
+import {
+  createAnalysisMetadata,
+  type AnalysisMetadata,
+} from './analysis-contracts';
+import type {
+  ExerciseTemplate,
+  HevySet,
+  HevyWorkout,
+} from './hevy-types';
+
 export type TrendPoint = { date: string; value: number; label: string };
 
 export type ExerciseOption = {
@@ -41,6 +51,7 @@ export type MuscleDistribution = {
 export type MuscleWindow = '7' | '14' | '30';
 
 export type DashboardData = {
+  analysis: AnalysisMetadata;
   connected: boolean;
   sourceLabel: string;
   syncMessage: string;
@@ -106,30 +117,6 @@ export type DashboardData = {
   insights: { plateau: string; return: string; progress: string };
 };
 
-type HevySet = {
-  type?: string;
-  weight_kg?: number | null;
-  reps?: number | null;
-  rpe?: number | null;
-};
-type HevyExercise = {
-  title: string;
-  exercise_template_id: string;
-  sets: HevySet[];
-};
-type HevyWorkout = {
-  id: string;
-  title: string;
-  start_time: string;
-  end_time: string;
-  exercises: HevyExercise[];
-};
-type ExerciseTemplate = {
-  id: string;
-  title: string;
-  primary_muscle_group?: string;
-};
-
 const API_ROOT = "https://api.hevyapp.com/v1";
 const DAY = 86_400_000;
 
@@ -141,8 +128,8 @@ function titleCase(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function daysAgo(iso: string) {
-  return (Date.now() - new Date(iso).getTime()) / DAY;
+function daysAgo(iso: string, nowMs = Date.now()) {
+  return (nowMs - new Date(iso).getTime()) / DAY;
 }
 
 function formatShortDate(iso: string) {
@@ -222,12 +209,18 @@ async function fetchTemplates(apiKey: string) {
   return templates;
 }
 
-function analyze(workouts: HevyWorkout[], templates: ExerciseTemplate[], athleteName: string): DashboardData {
+export function analyzeWorkoutHistory(
+  workouts: HevyWorkout[],
+  templates: ExerciseTemplate[],
+  athleteName: string,
+  now = new Date(),
+): DashboardData {
+  const nowMs = now.getTime();
   const sorted = [...workouts].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
   const templateMap = new Map(templates.map((item) => [item.id, item]));
-  const recent30 = sorted.filter((workout) => daysAgo(workout.start_time) <= 30);
-  const recent7 = sorted.filter((workout) => daysAgo(workout.start_time) <= 7);
-  const previous7 = sorted.filter((workout) => daysAgo(workout.start_time) > 7 && daysAgo(workout.start_time) <= 14);
+  const recent30 = sorted.filter((workout) => daysAgo(workout.start_time, nowMs) <= 30);
+  const recent7 = sorted.filter((workout) => daysAgo(workout.start_time, nowMs) <= 7);
+  const previous7 = sorted.filter((workout) => daysAgo(workout.start_time, nowMs) > 7 && daysAgo(workout.start_time, nowMs) <= 14);
   const countSets = (items: HevyWorkout[]) =>
     items
       .flatMap((workout) => workout.exercises)
@@ -244,7 +237,7 @@ function analyze(workouts: HevyWorkout[], templates: ExerciseTemplate[], athlete
     const previous = new Map<string, number>();
 
     for (const workout of sorted) {
-      const age = daysAgo(workout.start_time);
+      const age = daysAgo(workout.start_time, nowMs);
       const inCurrentWindow = age >= 0 && age <= windowDays;
       const inPreviousWindow = age > windowDays && age <= windowDays * 2;
       if (!inCurrentWindow && !inPreviousWindow) continue;
@@ -346,7 +339,7 @@ function analyze(workouts: HevyWorkout[], templates: ExerciseTemplate[], athlete
     points: [],
   };
 
-  const nowWeek = startOfWeek(new Date());
+  const nowWeek = startOfWeek(now);
   const workloadWeeks = Array.from({ length: 8 }, (_, reverseIndex) => {
     const start = new Date(nowWeek.getTime() - (7 - reverseIndex) * 7 * DAY);
     const end = new Date(start.getTime() + 7 * DAY);
@@ -365,7 +358,7 @@ function analyze(workouts: HevyWorkout[], templates: ExerciseTemplate[], athlete
   const records = [...histories.values()]
     .flatMap((history) => {
       const best = history
-        .filter((point) => daysAgo(point.date) >= 0 && daysAgo(point.date) <= 30)
+        .filter((point) => daysAgo(point.date, nowMs) >= 0 && daysAgo(point.date, nowMs) <= 30)
         .sort(
           (a, b) =>
             b.value - a.value ||
@@ -420,7 +413,7 @@ function analyze(workouts: HevyWorkout[], templates: ExerciseTemplate[], athlete
   const activeWeeks = workloadWeeks.filter((week) => week.sessions > 0).length;
   const consistencyPercent = Math.round((activeWeeks / workloadWeeks.length) * 100);
   const volumeChangePercent = percentChange(volume7d, previousVolume7d);
-  const lastGap = sorted[0] ? Math.round(daysAgo(sorted[0].start_time)) : 0;
+  const lastGap = sorted[0] ? Math.round(daysAgo(sorted[0].start_time, nowMs)) : 0;
   const plateau = Math.abs(trend.change) < 1.5;
   const biggestMuscle = [...muscles].sort((a, b) => b.sets - a.sets)[0];
   const lowestMuscle = [...muscles].filter((muscle) => muscle.sets > 0).sort((a, b) => a.sets - b.sets)[0];
@@ -442,6 +435,7 @@ function analyze(workouts: HevyWorkout[], templates: ExerciseTemplate[], athlete
   };
 
   return {
+    analysis: createAnalysisMetadata(sorted, templates, now),
     connected: true,
     sourceLabel: "Live Hevy data",
     syncMessage: `Analyzed ${sorted.length} recent workouts`,
@@ -640,6 +634,7 @@ function demoData(message = "Add HEVY_API_KEY to switch from sample data"): Dash
       volumeKg: Math.round(muscle.volumeKg * volumeMultiplier),
     }));
   return {
+    analysis: createAnalysisMetadata([], [], new Date()),
     connected: false,
     sourceLabel: "Sample workspace",
     syncMessage: message,
@@ -801,6 +796,7 @@ function unavailableData(message: string): DashboardData {
     sessions: 0,
   }));
   return {
+    analysis: createAnalysisMetadata([], [], new Date()),
     connected: false,
     sourceLabel: "Hevy unavailable",
     syncMessage: message,
@@ -845,7 +841,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   if (!apiKey) return demoData();
   try {
     const [workouts, templates, user] = await Promise.all([fetchWorkouts(apiKey), fetchTemplates(apiKey), hevyGet<{ data?: { name?: string }; name?: string }>("/user/info", apiKey)]);
-    return analyze(workouts, templates, user.data?.name ?? user.name ?? "Athlete");
+    return analyzeWorkoutHistory(workouts, templates, user.data?.name ?? user.name ?? "Athlete");
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unknown sync error";
     return unavailableData(`Hevy connection needs attention: ${reason}`);
