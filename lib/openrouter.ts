@@ -336,6 +336,24 @@ function compactContext(profile: AthleteProfile, dashboard: DashboardData) {
         repsAtModalLoad: exercise.repsAtModalLoad,
         lastSetRpe: exercise.lastSetRpe,
       })),
+      recentRecords: dashboard.records.map((record) => ({
+        exercise: record.exercise,
+        date: record.date,
+        kind: record.kind,
+        value:
+          record.kind === 'reps_at_load'
+            ? record.reps
+            : displayWeight(record.valueKg),
+        load: displayWeight(record.weightKg),
+        reps: record.reps,
+        previousValue:
+          record.previousValue == null
+            ? null
+            : record.kind === 'reps_at_load'
+              ? record.previousValue
+              : displayWeight(record.previousValue),
+        previousDate: record.previousDate,
+      })),
       recentWorkouts: dashboard.recentWorkouts.map((workout) => ({
         ...workout,
         volumeKg: undefined,

@@ -62,7 +62,7 @@ describe.each(Object.entries(ATHLETE_FIXTURES))(
 );
 
 describe('current analysis regression baseline', () => {
-  it('pins the version four analysis output', () => {
+  it('pins the version five analysis output', () => {
     const summaries = Object.fromEntries(
       Object.entries(ATHLETE_FIXTURES).map(([name, fixture]) => {
         const dashboard = analyzeWorkoutHistory(
@@ -95,10 +95,10 @@ describe('current analysis regression baseline', () => {
         trendExercise: 'Squat (Barbell)',
         trendChange: 0.76,
         recordExercises: [
-          'Romanian Deadlift (Barbell)',
           'Squat (Barbell)',
-          'Seated Row (Machine)',
           'Bench Press (Barbell)',
+          'Standing Calf Raise (Machine)',
+          'Romanian Deadlift (Barbell)',
           'Overhead Press (Barbell)',
         ],
       },
@@ -110,11 +110,11 @@ describe('current analysis regression baseline', () => {
         trendExercise: 'Romanian Deadlift (Barbell)',
         trendChange: 0.13,
         recordExercises: [
-          'Squat (Barbell)',
-          'Romanian Deadlift (Barbell)',
-          'Bench Press (Barbell)',
           'Lat Pulldown (Cable)',
           'Seated Row (Machine)',
+          'Romanian Deadlift (Barbell)',
+          'Incline Bench Press (Dumbbell)',
+          'Overhead Press (Barbell)',
         ],
       },
       advanced: {
@@ -125,11 +125,7 @@ describe('current analysis regression baseline', () => {
         trendExercise: 'Squat (Barbell)',
         trendChange: 0,
         recordExercises: [
-          'Squat (Barbell)',
-          'Romanian Deadlift (Barbell)',
-          'Bench Press (Barbell)',
-          'Seated Row (Machine)',
-          'Lat Pulldown (Cable)',
+          'Incline Bench Press (Barbell)',
         ],
       },
     });

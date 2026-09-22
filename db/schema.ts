@@ -224,3 +224,31 @@ export const progressionStates = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.userId, table.slotOrTemplateId] })],
 );
+
+export const personalRecords = sqliteTable(
+  'personal_records',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    key: text('key').notNull(),
+    templateId: text('template_id').notNull(),
+    slotId: text('slot_id'),
+    kind: text('kind').notNull(),
+    repBucket: text('rep_bucket'),
+    value: real('value').notNull(),
+    reps: integer('reps').notNull(),
+    loadKg: real('load_kg').notNull(),
+    performedAt: text('performed_at').notNull(),
+    workoutId: text('workout_id').notNull(),
+    previousValue: real('previous_value'),
+    previousAt: text('previous_at'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_personal_records_user_date').on(
+      table.userId,
+      table.performedAt,
+    ),
+    index('idx_personal_records_user_key').on(table.userId, table.key),
+  ],
+);
