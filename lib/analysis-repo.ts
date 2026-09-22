@@ -1,6 +1,9 @@
 import { getDatabase } from '../db';
-import { ANALYSIS_ENGINE_VERSION } from './analysis-contracts';
-import { snapshotContent, stableFingerprint } from './analysis-cache';
+import {
+  DASHBOARD_SNAPSHOT_VERSION,
+  snapshotContent,
+  stableFingerprint,
+} from './analysis-cache';
 import type { DashboardData } from './hevy';
 
 export type DerivationState = {
@@ -17,7 +20,7 @@ export async function getDashboardSnapshot(userId: string) {
       `SELECT content_json FROM dashboard_snapshots
        WHERE user_id = ? AND version = ?`,
     )
-    .bind(userId, ANALYSIS_ENGINE_VERSION)
+    .bind(userId, DASHBOARD_SNAPSHOT_VERSION)
     .first<{ content_json: string }>();
   if (!row) return null;
   try {
@@ -46,7 +49,7 @@ export async function saveDashboardSnapshot(
       userId,
       JSON.stringify(snapshotContent(dashboard)),
       derivedAt,
-      ANALYSIS_ENGINE_VERSION,
+      DASHBOARD_SNAPSHOT_VERSION,
     )
     .run();
 }
@@ -157,7 +160,7 @@ export async function analysisFingerprint(userId: string) {
     ]);
 
   return stableFingerprint({
-    version: ANALYSIS_ENGINE_VERSION,
+    version: DASHBOARD_SNAPSHOT_VERSION,
     training: training ?? {},
     profile: profile.results,
     overrides: overrides.results,

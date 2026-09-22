@@ -40,6 +40,7 @@
 .today-review-grid { margin-bottom: 18px; }
 .today-review-panel .review-sections { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .today-review-panel .review-sections > div { min-width: 0; }
+.review-narrative { max-width: 920px; margin: 20px 0 0; padding: 16px 18px; border: 1px solid rgb(184 237 74 / 18%); border-radius: 12px; background: rgb(184 237 74 / 6%); color: #eef3e9; font-size: 0.9rem; line-height: 1.65; }
 .review-panel .eyebrow { color: #9fa79a; }
 .review-panel .panel-heading svg { color: var(--signal); }
 .review-sections { display: grid; gap: 18px; margin-top: 24px; }
