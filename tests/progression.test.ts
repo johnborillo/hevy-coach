@@ -113,4 +113,27 @@ describe('progression engine', () => {
       ).status,
     ).toBe('variable_load');
   });
+
+  it('suppresses a recommendation for two exposures after a variation change', () => {
+    const state = computeProgression(
+      'incline-barbell',
+      'Incline Bench Press (Barbell)',
+      sessions([
+        [60, 8, 8],
+        [62.5, 9, 8],
+        [65, 10, 8.5],
+        [67.5, 10, 8.5],
+        [70, 10, 9],
+      ]).map((session, index) => ({
+        ...session,
+        exerciseTemplateId: index < 3 ? 'incline-dumbbell' : 'incline-barbell',
+      })),
+      { slotId: 'slot-incline-press', targetRepRange: [8, 10] },
+    );
+    expect(state).toMatchObject({
+      slotId: 'slot-incline-press',
+      variationChangeAt: '2026-09-04T12:00:00.000Z',
+      recommendation: 'none',
+    });
+  });
 });

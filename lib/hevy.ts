@@ -21,6 +21,7 @@ import {
   type ProgressionSession,
   type ProgressionState,
 } from './progression';
+import { suggestSlots, type ExerciseSlot, type SlotSuggestion } from './slots';
 import { classifySet } from './sets';
 
 export type TrendPoint = { date: string; value: number; label: string };
@@ -109,6 +110,8 @@ export type DashboardData = {
   }>;
   exerciseStats: Array<{
     exerciseTemplateId: string;
+    slotId: string | null;
+    slotName: string | null;
     exercise: string;
     muscle: string;
     sessions: number;
@@ -125,6 +128,8 @@ export type DashboardData = {
     lastSetRpe: number[];
   }>;
   progressionStates: ProgressionState[];
+  exerciseSlots: ExerciseSlot[];
+  slotSuggestions: SlotSuggestion[];
   recentWorkouts: Array<{
     title: string;
     date: string;
@@ -192,6 +197,7 @@ export function analyzeWorkoutHistory(
   athleteName: string,
   now = new Date(),
   muscleOverrides: MuscleOverride[] = [],
+  exerciseSlots: ExerciseSlot[] = [],
 ): DashboardData {
   const nowMs = now.getTime();
   const sorted = [...workouts].sort(
@@ -202,6 +208,11 @@ export function analyzeWorkoutHistory(
   const overrideMap = new Map(
     muscleOverrides.map((item) => [item.exerciseTemplateId, item]),
   );
+  const slotMap = new Map(exerciseSlots.map((slot) => [slot.id, slot]));
+  const slotForTemplate = (templateId: string) => {
+    const slotId = overrideMap.get(templateId)?.slotId ?? null;
+    return slotId ? (slotMap.get(slotId) ?? null) : null;
+  };
   const resolvedFor = (exercise: HevyExercise) =>
     resolveMuscles(
       templateMap.get(exercise.exercise_template_id) ?? {
@@ -362,6 +373,8 @@ export function analyzeWorkoutHistory(
     { title: string; sessions: number; sets: number; volumeKg: number }
   >();
   const progressionSessions = new Map<string, ProgressionSession[]>();
+  const progressionSubjectSlots = new Map<string, ExerciseSlot | null>();
+  const progressionSubjectTemplates = new Map<string, string>();
   for (const workout of sorted) {
     for (const exercise of workout.exercises) {
       const working = exercise.sets
@@ -384,13 +397,21 @@ export function analyzeWorkoutHistory(
       );
       exerciseTotals.set(exercise.exercise_template_id, total);
       if (working.length) {
-        const sessions =
-          progressionSessions.get(exercise.exercise_template_id) ?? [];
+        const slot = slotForTemplate(exercise.exercise_template_id);
+        const subjectId = slot?.id ?? exercise.exercise_template_id;
+        const sessions = progressionSessions.get(subjectId) ?? [];
         sessions.push({
           performedAt: workout.start_time,
           sets: working.map((item) => item.classified),
+          exerciseTemplateId: exercise.exercise_template_id,
+          exerciseTitle: exercise.title,
         });
-        progressionSessions.set(exercise.exercise_template_id, sessions);
+        progressionSessions.set(subjectId, sessions);
+        progressionSubjectSlots.set(subjectId, slot);
+        progressionSubjectTemplates.set(
+          subjectId,
+          exercise.exercise_template_id,
+        );
       }
       const candidates = working
         .map(({ set, classified }) => ({ set, value: classified.e1rmKg }))
@@ -413,20 +434,36 @@ export function analyzeWorkoutHistory(
   }
 
   const progressionStates = [...progressionSessions.entries()]
-    .map(([id, sessions]) =>
-      computeProgression(
-        id,
-        exerciseTotals.get(id)?.title ?? 'Unknown exercise',
+    .map(([subjectId, sessions]) => {
+      const slot = progressionSubjectSlots.get(subjectId) ?? null;
+      const representativeTemplateId =
+        progressionSubjectTemplates.get(subjectId) ?? subjectId;
+      return computeProgression(
+        representativeTemplateId,
+        slot?.name ?? sessions.at(-1)?.exerciseTitle ?? 'Unknown exercise',
         sessions,
-      ),
-    )
+        { slotId: slot?.id ?? null },
+      );
+    })
     .sort(
       (a, b) =>
         new Date(b.lastPerformedAt).getTime() -
         new Date(a.lastPerformedAt).getTime(),
     );
-  const progressionById = new Map(
-    progressionStates.map((state) => [state.exerciseTemplateId, state]),
+  const progressionBySubjectId = new Map(
+    progressionStates.map((state) => [
+      state.slotId ?? state.exerciseTemplateId,
+      state,
+    ]),
+  );
+  const progressionByTemplateId = new Map(
+    [...exerciseTotals.keys()].map((templateId) => {
+      const slot = slotForTemplate(templateId);
+      return [
+        templateId,
+        progressionBySubjectId.get(slot?.id ?? templateId),
+      ] as const;
+    }),
   );
 
   const strengthTrends = [...histories.entries()]
@@ -440,7 +477,7 @@ export function analyzeWorkoutHistory(
       }));
       return {
         exercise: history[0].title,
-        change: progressionById.get(id)?.performanceSlopePct ?? 0,
+        change: progressionByTemplateId.get(id)?.performanceSlopePct ?? 0,
         bestKg:
           Math.round(Math.max(...history.map((item) => item.value)) * 10) / 10,
         points,
@@ -519,18 +556,20 @@ export function analyzeWorkoutHistory(
           ? Math.round(Math.max(...history.map((point) => point.value)) * 10) /
             10
           : 0,
-        change: progressionById.get(id)?.performanceSlopePct ?? 0,
+        change: progressionByTemplateId.get(id)?.performanceSlopePct ?? 0,
+        slotId: slotForTemplate(id)?.id ?? null,
+        slotName: slotForTemplate(id)?.name ?? null,
         progressionStatus:
-          progressionById.get(id)?.status ?? 'insufficient_data',
+          progressionByTemplateId.get(id)?.status ?? 'insufficient_data',
         progressionRecommendation:
-          progressionById.get(id)?.recommendation ?? 'none',
+          progressionByTemplateId.get(id)?.recommendation ?? 'none',
         progressionRationale:
-          progressionById.get(id)?.rationale ??
+          progressionByTemplateId.get(id)?.rationale ??
           'No comparable working-set history is available yet.',
-        modalLoadKg: progressionById.get(id)?.modalLoadKg ?? 0,
-        targetRepRange: progressionById.get(id)?.targetRepRange ?? null,
-        repsAtModalLoad: progressionById.get(id)?.repsAtModalLoad ?? [],
-        lastSetRpe: progressionById.get(id)?.lastSetRpe ?? [],
+        modalLoadKg: progressionByTemplateId.get(id)?.modalLoadKg ?? 0,
+        targetRepRange: progressionByTemplateId.get(id)?.targetRepRange ?? null,
+        repsAtModalLoad: progressionByTemplateId.get(id)?.repsAtModalLoad ?? [],
+        lastSetRpe: progressionByTemplateId.get(id)?.lastSetRpe ?? [],
       };
     })
     .sort((a, b) => b.sessions - a.sessions)
@@ -636,6 +675,16 @@ export function analyzeWorkoutHistory(
     records,
     exerciseStats,
     progressionStates,
+    exerciseSlots: exerciseSlots.map((slot) => ({
+      ...slot,
+      templateIds: [...slot.templateIds],
+    })),
+    slotSuggestions: suggestSlots(templates).filter(
+      (suggestion) =>
+        !suggestion.templateIds.every((templateId) =>
+          slotForTemplate(templateId),
+        ),
+    ),
     recentWorkouts: sorted.slice(0, 8).map((workout) => ({
       title: workout.title,
       date: formatShortDate(workout.start_time),
@@ -824,6 +873,7 @@ function demoData(
     exerciseTemplateId,
     slotId: null,
     title,
+    variationChangeAt: null,
     sessionsAnalyzed: 6,
     lastPerformedAt: '2026-09-08T18:10:00.000Z',
     modalLoadKg: title.includes('Squat') ? 118 : 80,
@@ -880,6 +930,8 @@ function demoData(
     ) as ProgressionState;
     return {
       exerciseTemplateId: id,
+      slotId: null,
+      slotName: null,
       progressionStatus: state.status,
       progressionRecommendation: state.recommendation,
       progressionRationale: state.rationale,
@@ -1009,6 +1061,8 @@ function demoData(
       },
     ],
     progressionStates,
+    exerciseSlots: [],
+    slotSuggestions: [],
     recentWorkouts: [
       {
         title: 'Upper A',
@@ -1105,6 +1159,8 @@ function unavailableData(message: string): DashboardData {
     records: [],
     exerciseStats: [],
     progressionStates: [],
+    exerciseSlots: [],
+    slotSuggestions: [],
     recentWorkouts: [],
     calendarWorkouts: [],
     exerciseOptions: [],
@@ -1132,12 +1188,15 @@ export async function getDashboardData(
     const { getHevySyncState, listStoredHevyWorkouts, listStoredTemplates } =
       await import('./hevy-repo');
     const { listMuscleOverrides } = await import('./muscle-repo');
-    const [workouts, templateRows, syncState, overrides] = await Promise.all([
-      listStoredHevyWorkouts(userId, { limit: 5_000 }),
-      listStoredTemplates(userId),
-      getHevySyncState(userId),
-      listMuscleOverrides(userId),
-    ]);
+    const { listExerciseSlots } = await import('./slot-repo');
+    const [workouts, templateRows, syncState, overrides, slots] =
+      await Promise.all([
+        listStoredHevyWorkouts(userId, { limit: 5_000 }),
+        listStoredTemplates(userId),
+        getHevySyncState(userId),
+        listMuscleOverrides(userId),
+        listExerciseSlots(userId),
+      ]);
     if (workouts.length) {
       const dashboard = analyzeWorkoutHistory(
         workouts,
@@ -1145,6 +1204,7 @@ export async function getDashboardData(
         'Athlete',
         new Date(),
         overrides,
+        slots,
       );
       try {
         const { saveProgressionStates } = await import('./progression-repo');
