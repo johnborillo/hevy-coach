@@ -1498,6 +1498,11 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                   </div>
                   <Medal />
                 </div>
+                {data.weeklyReviewV2?.narrative && (
+                  <p className="review-narrative">
+                    {data.weeklyReviewV2.narrative}
+                  </p>
+                )}
                 <div className="review-sections">
                   {data.weeklyReviewV2 ? (
                     <>

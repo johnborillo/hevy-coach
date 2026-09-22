@@ -91,7 +91,7 @@ function retryDelay(response: Response | null, attempt: number) {
   return Math.min(450 * 2 ** attempt + Math.random() * 250, 2500);
 }
 
-async function requestCompletion(
+export async function requestCompletion(
   body: Record<string, unknown>,
   timeoutMs: number,
 ) {
@@ -212,7 +212,7 @@ function extractJson(content: string) {
   return JSON.parse(candidate) as Omit<TrainingProgram, 'id' | 'createdAt'>;
 }
 
-function messageContent(payload: CompletionPayload) {
+export function messageContent(payload: CompletionPayload) {
   const content = payload.choices?.[0]?.message?.content;
   if (typeof content === 'string') return content.trim();
   if (Array.isArray(content)) {
@@ -238,7 +238,10 @@ function numberTokens(value: string) {
   }));
 }
 
-function validateGroundedNumbers(content: string, evidenceText: string) {
+export function validateGroundedNumbers(
+  content: string,
+  evidenceText: string,
+) {
   const evidenceNumbers = numberTokens(evidenceText).map((item) => item.value);
   const allowed = new Set(evidenceNumbers);
   const historicalYear = /\b(?:on|logged|you did|session on|workout on)\s+(?:[^\d]{0,18})20\d{2}\b/i;

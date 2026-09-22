@@ -1,4 +1,4 @@
-import { ANALYSIS_ENGINE_VERSION } from './analysis-contracts';
+import { DASHBOARD_SNAPSHOT_VERSION } from './analysis-cache';
 import {
   analysisFingerprint,
   deleteDashboardSnapshot,
@@ -41,7 +41,7 @@ export async function deriveAnalysis(
     reason !== 'manual' &&
     snapshot &&
     state?.fingerprint === fingerprint &&
-    state.version === ANALYSIS_ENGINE_VERSION
+    state.version === DASHBOARD_SNAPSHOT_VERSION
   ) {
     return { changed: false, reason, derivedAt: state.derivedAt };
   }
@@ -72,7 +72,7 @@ export async function deriveAnalysis(
     await saveDerivationState(userId, {
       fingerprint,
       derivedAt,
-      version: ANALYSIS_ENGINE_VERSION,
+      version: DASHBOARD_SNAPSHOT_VERSION,
     });
     return { changed: true, reason, derivedAt, workoutCount: 0 };
   }
@@ -110,6 +110,15 @@ export async function deriveAnalysis(
     const { ensurePreviousWeekReview, listReviewHistory } =
       await import('./review');
     weeklyReviewV2 = await ensurePreviousWeekReview(userId);
+    if (weeklyReviewV2 && !weeklyReviewV2.narrative) {
+      const { narrateReview } = await import('./review-narrate');
+      const narrative = await narrateReview(weeklyReviewV2, profile);
+      if (narrative) {
+        weeklyReviewV2 = { ...weeklyReviewV2, narrative };
+        const { saveWeeklyReview } = await import('./review-repo');
+        await saveWeeklyReview(userId, weeklyReviewV2);
+      }
+    }
     reviewHistory = await listReviewHistory(userId);
   } catch (error) {
     console.error('Weekly review could not be refreshed during derivation', {
@@ -140,7 +149,7 @@ export async function deriveAnalysis(
   await saveDerivationState(userId, {
     fingerprint,
     derivedAt,
-    version: ANALYSIS_ENGINE_VERSION,
+    version: DASHBOARD_SNAPSHOT_VERSION,
   });
 
   return { changed: true, reason, derivedAt, workoutCount: workouts.length };

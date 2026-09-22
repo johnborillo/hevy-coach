@@ -1,5 +1,6 @@
-import { ANALYSIS_ENGINE_VERSION } from './analysis-contracts';
 import type { DashboardData } from './hevy';
+
+export const DASHBOARD_SNAPSHOT_VERSION = 2;
 
 export function stableFingerprint(value: unknown) {
   const input = JSON.stringify(value);
@@ -8,7 +9,7 @@ export function stableFingerprint(value: unknown) {
     hash ^= input.charCodeAt(index);
     hash = Math.imul(hash, 0x01000193);
   }
-  return `v${ANALYSIS_ENGINE_VERSION}-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+  return `v${DASHBOARD_SNAPSHOT_VERSION}-${(hash >>> 0).toString(16).padStart(8, '0')}`;
 }
 
 export function snapshotContent(dashboard: DashboardData): DashboardData {
