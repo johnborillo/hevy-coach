@@ -147,6 +147,14 @@ export function computeProgression(
   options: {
     targetRepRange?: [number, number] | null;
     slotId?: string | null;
+    phase?: 'cut' | 'maintain' | 'lean_gain' | 'gain' | 'recomp';
+    activeBlockKind?:
+      | 'accumulation'
+      | 'intensification'
+      | 'deload'
+      | 'maintenance'
+      | 'custom'
+      | null;
   } = {},
 ): ProgressionState {
   const sessions = [...inputSessions]
@@ -285,7 +293,9 @@ export function computeProgression(
   } else if (status === 'stalled') {
     recommendation =
       latestRpe !== null && latestRpe >= 9.5 ? 'reduce_load' : 'swap_or_rotate';
-  } else if (status === 'regressing') recommendation = 'reduce_volume';
+  } else if (status === 'regressing') {
+    recommendation = options.phase === 'cut' ? 'hold' : 'reduce_volume';
+  }
 
   let variationChangeAt: string | null = null;
   let latestVariationChangeIndex = -1;
@@ -312,7 +322,20 @@ export function computeProgression(
   ) {
     recommendation = 'none';
   }
+  if (
+    options.activeBlockKind === 'deload' &&
+    (status === 'regressing' || status === 'stalled')
+  ) {
+    recommendation = 'none';
+  }
 
+  const phaseRationale =
+    options.activeBlockKind === 'deload' &&
+    (status === 'regressing' || status === 'stalled')
+      ? 'This block is marked as a planned deload; keep the reduced exposure and reassess when normal training resumes.'
+      : status === 'regressing' && options.phase === 'cut'
+        ? 'Performance is down during a cut; hold the exposure and watch for a loss beyond roughly 10% before changing volume.'
+        : null;
   return {
     exerciseTemplateId,
     slotId: options.slotId ?? null,
@@ -333,7 +356,8 @@ export function computeProgression(
     status,
     recommendation,
     rationale:
-      sessionsSinceVariation !== null &&
+      phaseRationale ??
+      (sessionsSinceVariation !== null &&
       sessionsSinceVariation >= 1 &&
       sessionsSinceVariation <= 2
         ? 'New exercise variation; establish a two-session baseline before changing load or volume.'
@@ -342,6 +366,6 @@ export function computeProgression(
             sessionsSinceImprovement: sinceImprovement,
             rpeCoverage,
             performanceSlopePct,
-          }),
+          })),
   };
 }

@@ -2,6 +2,18 @@ import { getDatabase } from '@/db';
 
 export type WeightUnit = 'kg' | 'lb';
 export type HeightUnit = 'metric' | 'imperial';
+export type TrainingPhase =
+  | 'cut'
+  | 'maintain'
+  | 'lean_gain'
+  | 'gain'
+  | 'recomp';
+export type LoadIncrements = {
+  barbell: number;
+  dumbbell: number;
+  machine: number;
+  cable: number;
+};
 
 export type AthleteProfile = {
   displayName: string;
@@ -19,6 +31,14 @@ export type AthleteProfile = {
   equipment: string;
   limitations: string;
   preferences: string;
+  phase: TrainingPhase;
+  phaseStartedAt: string;
+  dailyCalories: number | null;
+  proteinGrams: number | null;
+  sleepHoursTypical: number | null;
+  dropsetWeight: number;
+  loadIncrements: LoadIncrements;
+  timezone: string;
 };
 
 export type ConversationSummary = {
@@ -83,6 +103,14 @@ export const DEFAULT_PROFILE: AthleteProfile = {
   equipment: 'Full gym',
   limitations: '',
   preferences: '',
+  phase: 'maintain',
+  phaseStartedAt: '',
+  dailyCalories: null,
+  proteinGrams: null,
+  sleepHoursTypical: null,
+  dropsetWeight: 0.5,
+  loadIncrements: { barbell: 2.5, dumbbell: 2, machine: 5, cable: 2.5 },
+  timezone: 'UTC',
 };
 
 type ProfileRow = {
@@ -101,7 +129,29 @@ type ProfileRow = {
   equipment: string;
   limitations: string;
   preferences: string;
+  phase: TrainingPhase;
+  phase_started_at: string | null;
+  daily_calories: number | null;
+  protein_grams: number | null;
+  sleep_hours_typical: number | null;
+  dropset_weight: number;
+  load_increments_json: string;
+  timezone: string;
 };
+
+function parseLoadIncrements(value: string): LoadIncrements {
+  try {
+    const parsed = JSON.parse(value) as Partial<LoadIncrements>;
+    return {
+      barbell: Number.isFinite(parsed.barbell) ? Number(parsed.barbell) : 2.5,
+      dumbbell: Number.isFinite(parsed.dumbbell) ? Number(parsed.dumbbell) : 2,
+      machine: Number.isFinite(parsed.machine) ? Number(parsed.machine) : 5,
+      cable: Number.isFinite(parsed.cable) ? Number(parsed.cable) : 2.5,
+    };
+  } catch {
+    return { ...DEFAULT_PROFILE.loadIncrements };
+  }
+}
 
 function rowToProfile(row: ProfileRow): AthleteProfile {
   return {
@@ -120,6 +170,14 @@ function rowToProfile(row: ProfileRow): AthleteProfile {
     equipment: row.equipment,
     limitations: row.limitations,
     preferences: row.preferences,
+    phase: row.phase,
+    phaseStartedAt: row.phase_started_at ?? '',
+    dailyCalories: row.daily_calories,
+    proteinGrams: row.protein_grams,
+    sleepHoursTypical: row.sleep_hours_typical,
+    dropsetWeight: row.dropset_weight,
+    loadIncrements: parseLoadIncrements(row.load_increments_json),
+    timezone: row.timezone || 'UTC',
   };
 }
 
@@ -129,7 +187,9 @@ export async function getProfile(userId: string) {
       `SELECT display_name, biological_sex, age, height_cm, weight_kg,
         weight_unit, height_unit,
         experience, primary_goal, target_date, days_per_week,
-        minutes_per_session, equipment, limitations, preferences
+        minutes_per_session, equipment, limitations, preferences,
+        phase, phase_started_at, daily_calories, protein_grams,
+        sleep_hours_typical, dropset_weight, load_increments_json, timezone
        FROM athlete_profiles WHERE user_id = ?`,
     )
     .bind(userId)
@@ -146,8 +206,10 @@ export async function saveProfile(userId: string, profile: AthleteProfile) {
         user_id, display_name, biological_sex, age, height_cm, weight_kg,
         weight_unit, height_unit, experience, primary_goal, target_date,
         days_per_week, minutes_per_session, equipment, limitations,
-        preferences, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        preferences, phase, phase_started_at, daily_calories, protein_grams,
+        sleep_hours_typical, dropset_weight, load_increments_json, timezone,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id) DO UPDATE SET
         display_name = excluded.display_name,
         biological_sex = excluded.biological_sex,
@@ -164,6 +226,14 @@ export async function saveProfile(userId: string, profile: AthleteProfile) {
         equipment = excluded.equipment,
         limitations = excluded.limitations,
         preferences = excluded.preferences,
+        phase = excluded.phase,
+        phase_started_at = excluded.phase_started_at,
+        daily_calories = excluded.daily_calories,
+        protein_grams = excluded.protein_grams,
+        sleep_hours_typical = excluded.sleep_hours_typical,
+        dropset_weight = excluded.dropset_weight,
+        load_increments_json = excluded.load_increments_json,
+        timezone = excluded.timezone,
         updated_at = excluded.updated_at`,
     )
     .bind(
@@ -183,6 +253,14 @@ export async function saveProfile(userId: string, profile: AthleteProfile) {
       profile.equipment,
       profile.limitations,
       profile.preferences,
+      profile.phase,
+      profile.phaseStartedAt || null,
+      profile.dailyCalories,
+      profile.proteinGrams,
+      profile.sleepHoursTypical,
+      profile.dropsetWeight,
+      JSON.stringify(profile.loadIncrements),
+      profile.timezone,
       now,
     )
     .run();
@@ -231,7 +309,14 @@ export async function createConversation(
     )
     .bind(id, userId, title, now, now)
     .run();
-  return { id, title, pinned: false, createdAt: now, updatedAt: now, preview: '' };
+  return {
+    id,
+    title,
+    pinned: false,
+    createdAt: now,
+    updatedAt: now,
+    preview: '',
+  };
 }
 
 export async function setConversationPinned(
@@ -240,9 +325,7 @@ export async function setConversationPinned(
   pinned: boolean,
 ) {
   await getDatabase()
-    .prepare(
-      'UPDATE conversations SET pinned = ? WHERE id = ? AND user_id = ?',
-    )
+    .prepare('UPDATE conversations SET pinned = ? WHERE id = ? AND user_id = ?')
     .bind(pinned ? 1 : 0, id, userId)
     .run();
 }

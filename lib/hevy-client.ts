@@ -11,6 +11,11 @@ export type HevyWorkoutEvent =
   | { type: 'updated'; workout: HevyWorkout }
   | { type: 'deleted'; id: string; deleted_at?: string };
 
+export type HevyBodyMeasurement = {
+  date: string;
+  weight_kg: number | null;
+};
+
 export type HevyApi = {
   workouts(page: number): Promise<HevyPage<{ workouts: HevyWorkout[] }>>;
   workoutEvents(
@@ -20,6 +25,9 @@ export type HevyApi = {
   templates(
     page: number,
   ): Promise<HevyPage<{ exercise_templates: ExerciseTemplate[] }>>;
+  bodyMeasurements?(
+    page: number,
+  ): Promise<HevyPage<{ body_measurements: HevyBodyMeasurement[] }>>;
 };
 
 export function createHevyClient(
@@ -57,6 +65,11 @@ export function createHevyClient(
     templates(page) {
       return get<HevyPage<{ exercise_templates: ExerciseTemplate[] }>>(
         `/exercise_templates?page=${page}&pageSize=100`,
+      );
+    },
+    bodyMeasurements(page) {
+      return get<HevyPage<{ body_measurements: HevyBodyMeasurement[] }>>(
+        `/body_measurements?page=${page}&pageSize=10`,
       );
     },
   };

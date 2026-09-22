@@ -4,6 +4,7 @@ import type {
   ChatMessage,
   TrainingProgram,
 } from '@/lib/storage';
+import { buildAthleteContext } from '@/lib/context';
 
 const DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
 
@@ -264,12 +265,31 @@ function compactVerifiedWorkoutLog(
 
 function compactContext(profile: AthleteProfile, dashboard: DashboardData) {
   const verifiedHevyWorkoutLog = compactVerifiedWorkoutLog(dashboard, profile);
+  const athleteContext = buildAthleteContext(
+    profile,
+    dashboard.bodyWeightTrend ?? null,
+    dashboard.activeTrainingBlock ?? null,
+  );
+  const bodyWeightTrend = athleteContext.bodyWeightTrend;
   const { heightCm, weightKg, heightUnit, weightUnit, ...athleteProfile } =
     profile;
   const displayWeight = (valueKg: number) => preferredWeight(valueKg, profile);
   return JSON.stringify({
     athlete: {
       ...athleteProfile,
+      phaseWeeks: athleteContext.phaseWeeks,
+      loadIncrements: Object.fromEntries(
+        Object.entries(athleteContext.increments).map(([key, value]) => [
+          key,
+          displayWeight(value),
+        ]),
+      ),
+      phaseContext:
+        profile.phase === 'cut'
+          ? 'A performance dip up to roughly 5–10% can be expected during a cut; distinguish that from a larger loss.'
+          : profile.phase === 'maintain'
+            ? 'Performance dips beyond roughly 5% during maintenance deserve attention.'
+            : 'Strength should generally be stable or improving in this phase; explain small fluctuations without overreacting.',
       measurementPreferences: {
         weightUnit,
         heightFormat:
@@ -294,6 +314,24 @@ function compactContext(profile: AthleteProfile, dashboard: DashboardData) {
         totalVolume30dKg: undefined,
         totalLoadVolume30d: displayWeight(dashboard.stats.totalVolume30dKg),
       },
+      bodyWeightTrend: bodyWeightTrend
+        ? {
+            average7d: preferredWeight(bodyWeightTrend.average7d, profile),
+            slopePerWeek: preferredWeight(
+              bodyWeightTrend.slopeKgPerWeek,
+              profile,
+            ),
+            latest: preferredWeight(bodyWeightTrend.latest, profile),
+          }
+        : null,
+      activeTrainingBlock: dashboard.activeTrainingBlock
+        ? {
+            name: dashboard.activeTrainingBlock.name,
+            kind: dashboard.activeTrainingBlock.kind,
+            startsAt: dashboard.activeTrainingBlock.startsAt,
+            endsAt: dashboard.activeTrainingBlock.endsAt,
+          }
+        : null,
       muscleDistribution: dashboard.muscles.map((muscle) => ({
         name: muscle.name,
         sets: muscle.sets,

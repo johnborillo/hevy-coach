@@ -33,6 +33,10 @@ export type HevySyncRepository = {
     templates: ExerciseTemplate[],
     syncedAt?: string,
   ): Promise<unknown>;
+  upsertBodyWeights?(
+    userId: string,
+    points: Array<{ measuredAt: string; weightKg: number }>,
+  ): Promise<unknown>;
 };
 
 async function defaultRepository(): Promise<HevySyncRepository> {
@@ -44,6 +48,7 @@ async function defaultRepository(): Promise<HevySyncRepository> {
     replaceWorkout: repo.replaceStoredWorkout,
     markWorkoutDeleted: repo.markStoredWorkoutDeleted,
     upsertTemplates: repo.upsertStoredTemplates,
+    upsertBodyWeights: repo.upsertHevyBodyWeights,
   };
 }
 
@@ -80,6 +85,34 @@ async function syncTemplates(
   } while (page <= pageCount);
 }
 
+async function syncBodyMeasurements(
+  userId: string,
+  client: HevyApi,
+  repo: HevySyncRepository,
+) {
+  if (!client.bodyMeasurements || !repo.upsertBodyWeights) return;
+  try {
+    const points: Array<{ measuredAt: string; weightKg: number }> = [];
+    let page = 1;
+    let pageCount = 1;
+    do {
+      const response = await client.bodyMeasurements(page);
+      pageCount = response.page_count;
+      for (const measurement of response.body_measurements) {
+        const weightKg = Number(measurement.weight_kg);
+        if (!measurement.date || !Number.isFinite(weightKg)) continue;
+        const measuredAt = new Date(`${measurement.date}T12:00:00.000Z`);
+        if (!Number.isFinite(measuredAt.getTime())) continue;
+        points.push({ measuredAt: measuredAt.toISOString(), weightKg });
+      }
+      page += 1;
+    } while (page <= pageCount);
+    if (points.length) await repo.upsertBodyWeights(userId, points);
+  } catch {
+    // Body measurements are optional in Hevy and should never block workout sync.
+  }
+}
+
 async function runFullSyncStep(
   userId: string,
   client: HevyApi,
@@ -95,6 +128,7 @@ async function runFullSyncStep(
     isOlderThan(state.templatesSyncedAt, TEMPLATE_FRESHNESS_MS, now.getTime())
   ) {
     await syncTemplates(userId, client, repo, syncedAt);
+    await syncBodyMeasurements(userId, client, repo);
     nextState.templatesSyncedAt = syncedAt;
     await repo.saveState(nextState);
   }
@@ -169,6 +203,7 @@ async function runDeltaSync(
   let templatesSyncedAt = state.templatesSyncedAt;
   if (isOlderThan(templatesSyncedAt, TEMPLATE_FRESHNESS_MS, now.getTime())) {
     await syncTemplates(userId, client, repo, syncedAt);
+    await syncBodyMeasurements(userId, client, repo);
     templatesSyncedAt = syncedAt;
   }
 

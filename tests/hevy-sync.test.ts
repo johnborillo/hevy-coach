@@ -20,6 +20,7 @@ function createMemoryRepository(initialState: HevySyncState | null = null) {
   let state = initialState ? { ...initialState } : null;
   const workouts = new Map<string, HevyWorkout>();
   const templates = new Set<string>();
+  const bodyWeights: Array<{ measuredAt: string; weightKg: number }> = [];
   const repo: HevySyncRepository = {
     async countWorkouts() {
       return workouts.size;
@@ -40,11 +41,15 @@ function createMemoryRepository(initialState: HevySyncState | null = null) {
     async upsertTemplates(_userId, values) {
       values.forEach((value) => templates.add(value.id));
     },
+    async upsertBodyWeights(_userId, values) {
+      bodyWeights.push(...values);
+    },
   };
   return {
     repo,
     workouts,
     templates,
+    bodyWeights,
     state: () => state,
   };
 }
@@ -65,6 +70,11 @@ describe('Hevy synchronization', () => {
       })),
       workoutEvents: vi.fn(),
       templates: templateRequest,
+      bodyMeasurements: vi.fn(async () => ({
+        page: 1,
+        page_count: 1,
+        body_measurements: [{ date: '2026-09-21', weight_kg: 82.4 }],
+      })),
     };
 
     const first = await syncHevy('athlete', 'key', {
@@ -100,6 +110,9 @@ describe('Hevy synchronization', () => {
       lastEventSince: '2026-09-21T12:00:00.000Z',
     });
     expect(templateRequest).toHaveBeenCalledTimes(1);
+    expect(memory.bodyWeights).toEqual([
+      { measuredAt: '2026-09-21T12:00:00.000Z', weightKg: 82.4 },
+    ]);
   });
 
   it('applies updated and deleted events idempotently', async () => {

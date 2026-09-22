@@ -9,6 +9,8 @@ import {
   type StoredHevyWorkout,
 } from './hevy-store';
 
+export { upsertHevyBodyWeights } from './body-weight-repo';
+
 export type HevySyncState = {
   userId: string;
   lastEventSince: string | null;
