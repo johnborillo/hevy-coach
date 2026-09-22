@@ -22,7 +22,7 @@ import {
   type ProgressionState,
 } from './progression';
 import { suggestSlots, type ExerciseSlot, type SlotSuggestion } from './slots';
-import { classifySet } from './sets';
+import { classifySet, compoundEligible } from './sets';
 import {
   detectRecords,
   selectRecentRecords,
@@ -39,6 +39,13 @@ import {
 import type { BodyWeightPoint } from './body-weight-repo';
 import type { TrainingBlock } from './training-block-repo';
 import type { WeeklyReview } from './findings';
+import {
+  localDayKey,
+  localMondayStart,
+  localWindowStart,
+  safeTimeZone,
+  shiftLocalDays,
+} from './time';
 
 export type TrendPoint = { date: string; value: number; label: string };
 
@@ -161,6 +168,8 @@ export type DashboardData = {
     targetRepRange: [number, number] | null;
     repsAtModalLoad: number[];
     lastSetRpe: number[];
+    performanceMetric: ProgressionState['performanceMetric'];
+    performanceIndex: number[];
   }>;
   progressionStates: ProgressionState[];
   exerciseSlots: ExerciseSlot[];
@@ -192,17 +201,19 @@ function daysAgo(iso: string, nowMs = Date.now()) {
   return (nowMs - new Date(iso).getTime()) / DAY;
 }
 
-function formatShortDate(iso: string) {
+function formatShortDate(iso: string, timeZone = 'UTC') {
   return new Intl.DateTimeFormat('en-CA', {
     month: 'short',
     day: 'numeric',
+    timeZone: safeTimeZone(timeZone),
   }).format(new Date(iso));
 }
 
-function formatTime(iso: string) {
+function formatTime(iso: string, timeZone = 'UTC') {
   return new Intl.DateTimeFormat('en-CA', {
     hour: 'numeric',
     minute: '2-digit',
+    timeZone: safeTimeZone(timeZone),
   }).format(new Date(iso));
 }
 
@@ -220,14 +231,6 @@ function percentChange(current: number, previous: number) {
   return Math.round(((current - previous) / previous) * 1000) / 10;
 }
 
-function startOfWeek(date: Date) {
-  const copy = new Date(date);
-  const day = (copy.getDay() + 6) % 7;
-  copy.setHours(0, 0, 0, 0);
-  copy.setDate(copy.getDate() - day);
-  return copy;
-}
-
 export function analyzeWorkoutHistory(
   workouts: HevyWorkout[],
   templates: ExerciseTemplate[],
@@ -238,8 +241,10 @@ export function analyzeWorkoutHistory(
   plannedDaysPerWeek = 4,
   phase: 'cut' | 'maintain' | 'lean_gain' | 'gain' | 'recomp' = 'maintain',
   activeBlockKind: TrainingBlock['kind'] | null = null,
+  timeZone = 'UTC',
 ): DashboardData {
   const nowMs = now.getTime();
+  const athleteTimeZone = safeTimeZone(timeZone);
   const sorted = [...workouts].sort(
     (a, b) =>
       new Date(b.start_time).getTime() - new Date(a.start_time).getTime(),
@@ -290,17 +295,21 @@ export function analyzeWorkoutHistory(
       (sum, exercise) => sum + exerciseVolume(exercise),
       0,
     );
-  const recent30 = sorted.filter(
-    (workout) => daysAgo(workout.start_time, nowMs) <= 30,
-  );
-  const recent7 = sorted.filter(
-    (workout) => daysAgo(workout.start_time, nowMs) <= 7,
-  );
-  const previous7 = sorted.filter(
-    (workout) =>
-      daysAgo(workout.start_time, nowMs) > 7 &&
-      daysAgo(workout.start_time, nowMs) <= 14,
-  );
+  const start30 = localWindowStart(now, 30, athleteTimeZone).getTime();
+  const start14 = localWindowStart(now, 14, athleteTimeZone).getTime();
+  const start7 = localWindowStart(now, 7, athleteTimeZone).getTime();
+  const recent30 = sorted.filter((workout) => {
+    const time = new Date(workout.start_time).getTime();
+    return time >= start30 && time <= nowMs;
+  });
+  const recent7 = sorted.filter((workout) => {
+    const time = new Date(workout.start_time).getTime();
+    return time >= start7 && time <= nowMs;
+  });
+  const previous7 = sorted.filter((workout) => {
+    const time = new Date(workout.start_time).getTime();
+    return time >= start14 && time < start7;
+  });
   const countSets = (items: HevyWorkout[]) =>
     items.reduce((sum, workout) => sum + workoutWorkingSets(workout), 0);
   const totalVolume = (items: HevyWorkout[]) =>
@@ -332,11 +341,16 @@ export function analyzeWorkoutHistory(
     }),
   );
   const auditWindows = {
-    '7': computeMuscleAudit(auditObservations, now, 7),
-    '14': computeMuscleAudit(auditObservations, now, 14),
-    '30': computeMuscleAudit(auditObservations, now, 30),
+    '7': computeMuscleAudit(auditObservations, now, 7, athleteTimeZone),
+    '14': computeMuscleAudit(auditObservations, now, 14, athleteTimeZone),
+    '30': computeMuscleAudit(auditObservations, now, 30, athleteTimeZone),
   } as const;
-  const fourWeekAudit = computeMuscleAudit(auditObservations, now, 28);
+  const fourWeekAudit = computeMuscleAudit(
+    auditObservations,
+    now,
+    28,
+    athleteTimeZone,
+  );
   const balance = computeBalance(fourWeekAudit);
   const adherenceWeeks = computeAdherence(
     sorted.map((workout) => ({
@@ -345,6 +359,7 @@ export function analyzeWorkoutHistory(
     })),
     plannedDaysPerWeek,
     now,
+    athleteTimeZone,
   );
   const adherencePct = adherenceWeeks.length
     ? Math.round(
@@ -361,10 +376,20 @@ export function analyzeWorkoutHistory(
     >();
     const previous = new Map<Muscle, number>();
 
+    const currentStart = localWindowStart(
+      now,
+      windowDays,
+      athleteTimeZone,
+    ).getTime();
+    const previousStart = localWindowStart(
+      now,
+      windowDays * 2,
+      athleteTimeZone,
+    ).getTime();
     for (const workout of sorted) {
-      const age = daysAgo(workout.start_time, nowMs);
-      const inCurrentWindow = age >= 0 && age <= windowDays;
-      const inPreviousWindow = age > windowDays && age <= windowDays * 2;
+      const time = new Date(workout.start_time).getTime();
+      const inCurrentWindow = time >= currentStart && time <= nowMs;
+      const inPreviousWindow = time >= previousStart && time < currentStart;
       if (!inCurrentWindow && !inPreviousWindow) continue;
 
       for (const exercise of workout.exercises) {
@@ -462,6 +487,10 @@ export function analyzeWorkoutHistory(
   const progressionSessions = new Map<string, ProgressionSession[]>();
   const progressionSubjectSlots = new Map<string, ExerciseSlot | null>();
   const progressionSubjectTemplates = new Map<string, string>();
+  const progressionSubjectMetrics = new Map<
+    string,
+    ProgressionState['performanceMetric']
+  >();
   for (const workout of sorted) {
     for (const exercise of workout.exercises) {
       const working = exercise.sets
@@ -495,10 +524,23 @@ export function analyzeWorkoutHistory(
         });
         progressionSessions.set(subjectId, sessions);
         progressionSubjectSlots.set(subjectId, slot);
-        progressionSubjectTemplates.set(
-          subjectId,
-          exercise.exercise_template_id,
-        );
+        if (!progressionSubjectTemplates.has(subjectId)) {
+          progressionSubjectTemplates.set(
+            subjectId,
+            exercise.exercise_template_id,
+          );
+          const template = templateMap.get(exercise.exercise_template_id);
+          progressionSubjectMetrics.set(
+            subjectId,
+            compoundEligible({
+              title: exercise.title,
+              equipment: template?.equipment,
+              primary_muscle_group: template?.primary_muscle_group,
+            })
+              ? 'trend_e1rm'
+              : 'best_set_load_reps',
+          );
+        }
       }
       const candidates = working
         .map(({ set, classified }) => ({ set, value: classified.e1rmKg }))
@@ -529,7 +571,12 @@ export function analyzeWorkoutHistory(
         representativeTemplateId,
         slot?.name ?? sessions.at(-1)?.exerciseTitle ?? 'Unknown exercise',
         sessions,
-        { slotId: slot?.id ?? null, phase, activeBlockKind },
+        {
+          slotId: slot?.id ?? null,
+          phase,
+          activeBlockKind,
+          metric: progressionSubjectMetrics.get(subjectId),
+        },
       );
     })
     .sort(
@@ -560,7 +607,7 @@ export function analyzeWorkoutHistory(
       const points = chronological.map((point) => ({
         date: point.date,
         value: Math.round(point.value * 10) / 10,
-        label: formatShortDate(point.date),
+        label: formatShortDate(point.date, athleteTimeZone),
       }));
       return {
         exercise: history[0].title,
@@ -577,16 +624,20 @@ export function analyzeWorkoutHistory(
     points: [],
   };
 
-  const nowWeek = startOfWeek(now);
+  const nowWeek = localMondayStart(now, athleteTimeZone);
   const workloadWeeks = Array.from({ length: 8 }, (_, reverseIndex) => {
-    const start = new Date(nowWeek.getTime() - (7 - reverseIndex) * 7 * DAY);
-    const end = new Date(start.getTime() + 7 * DAY);
+    const start = shiftLocalDays(
+      nowWeek,
+      -(7 - reverseIndex) * 7,
+      athleteTimeZone,
+    );
+    const end = shiftLocalDays(start, 7, athleteTimeZone);
     const inWeek = sorted.filter((workout) => {
       const time = new Date(workout.start_time).getTime();
       return time >= start.getTime() && time < end.getTime();
     });
     return {
-      label: formatShortDate(start.toISOString()),
+      label: formatShortDate(start.toISOString(), athleteTimeZone),
       sets: countSets(inWeek),
       volumeKg: Math.round(totalVolume(inWeek)),
       sessions: inWeek.length,
@@ -602,14 +653,14 @@ export function analyzeWorkoutHistory(
   const records = selectRecentRecords(personalRecords, now, { limit: 5 }).map(
     (record) => ({
       exercise: record.exercise,
-      date: formatShortDate(record.performedAt),
+      date: formatShortDate(record.performedAt, athleteTimeZone),
       valueKg: record.kind === 'reps_at_load' ? record.loadKg : record.value,
       reps: record.reps,
       weightKg: record.loadKg,
       kind: record.kind,
       previousValue: record.previousValue,
       previousDate: record.previousAt
-        ? formatShortDate(record.previousAt)
+        ? formatShortDate(record.previousAt, athleteTimeZone)
         : null,
       scope: record.scope,
     }),
@@ -652,6 +703,11 @@ export function analyzeWorkoutHistory(
         targetRepRange: progressionByTemplateId.get(id)?.targetRepRange ?? null,
         repsAtModalLoad: progressionByTemplateId.get(id)?.repsAtModalLoad ?? [],
         lastSetRpe: progressionByTemplateId.get(id)?.lastSetRpe ?? [],
+        performanceMetric:
+          progressionByTemplateId.get(id)?.performanceMetric ??
+          'best_set_load_reps',
+        performanceIndex:
+          progressionByTemplateId.get(id)?.performanceIndex ?? [],
       };
     })
     .sort((a, b) => b.sessions - a.sessions)
@@ -693,7 +749,7 @@ export function analyzeWorkoutHistory(
   const biggestMuscle = [...muscles].sort((a, b) => b.sets - a.sets)[0];
   const lowestMuscle = [...muscles].sort((a, b) => a.sets - b.sets)[0];
   const weeklyReview = {
-    label: `${formatShortDate(nowWeek.toISOString())}–${formatShortDate(new Date(nowWeek.getTime() + 6 * DAY).toISOString())}`,
+    label: `${formatShortDate(nowWeek.toISOString(), athleteTimeZone)}–${formatShortDate(shiftLocalDays(nowWeek, 6, athleteTimeZone).toISOString(), athleteTimeZone)}`,
     wins: [
       `${recent7.length} session${recent7.length === 1 ? '' : 's'} completed with ${workingSets7d} direct working sets.`,
       records.length
@@ -730,7 +786,7 @@ export function analyzeWorkoutHistory(
     syncMessage: `Analyzed ${sorted.length} recent workouts`,
     athleteName,
     lastWorkout: sorted[0]
-      ? `${sorted[0].title} · ${formatShortDate(sorted[0].start_time)}`
+      ? `${sorted[0].title} · ${formatShortDate(sorted[0].start_time, athleteTimeZone)}`
       : 'No workouts found',
     stats: {
       sessions30d: recent30.length,
@@ -773,7 +829,7 @@ export function analyzeWorkoutHistory(
     ),
     recentWorkouts: sorted.slice(0, 8).map((workout) => ({
       title: workout.title,
-      date: formatShortDate(workout.start_time),
+      date: formatShortDate(workout.start_time, athleteTimeZone),
       duration: `${Math.round(durationMinutes(workout))} min`,
       exercises: workout.exercises.length,
       workingSets: workoutWorkingSets(workout),
@@ -783,8 +839,8 @@ export function analyzeWorkoutHistory(
       id: workout.id,
       title: workout.title,
       description: workout.description ?? null,
-      date: workout.start_time.slice(0, 10),
-      time: formatTime(workout.start_time),
+      date: localDayKey(new Date(workout.start_time), athleteTimeZone),
+      time: formatTime(workout.start_time, athleteTimeZone),
       durationMinutes: Math.round(durationMinutes(workout)),
       workingSets: workoutWorkingSets(workout),
       volumeKg: Math.round(workoutVolume(workout)),
@@ -988,6 +1044,7 @@ function demoData(
     rpeCoverage: 0.83,
     lastSetRpe: [8, 8, 8.5, 8.5, 9, 9],
     rpeSlope: 0.2,
+    performanceMetric: 'trend_e1rm',
     performanceIndex: points.map((point) => point.value),
     performanceSlopePct,
     sessionsSinceImprovement: status === 'stalled' ? 4 : 1,
@@ -1045,6 +1102,8 @@ function demoData(
       targetRepRange: state.targetRepRange,
       repsAtModalLoad: state.repsAtModalLoad,
       lastSetRpe: state.lastSetRpe,
+      performanceMetric: state.performanceMetric,
+      performanceIndex: state.performanceIndex,
     };
   };
   return {
@@ -1364,6 +1423,7 @@ export async function getDashboardData(
         profile.daysPerWeek,
         profile.phase,
         activeTrainingBlock(trainingBlocks)?.kind ?? null,
+        profile.timezone,
       );
       try {
         const { saveProgressionStates } = await import('./progression-repo');

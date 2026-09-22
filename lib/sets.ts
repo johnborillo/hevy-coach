@@ -58,7 +58,7 @@ function setClass(set: HevySet): SetClass {
   return 'working';
 }
 
-function compoundEligible(exercise: SetExercise) {
+export function compoundEligible(exercise: SetExercise) {
   const muscle = normalize(exercise.primary_muscle_group);
   return (
     !ISOLATION_MUSCLES.has(muscle) &&

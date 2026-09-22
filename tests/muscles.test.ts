@@ -3,6 +3,30 @@ import { analyzeWorkoutHistory } from '../lib/hevy';
 import { MUSCLES, resolveMuscles } from '../lib/muscles';
 
 describe('muscle resolution', () => {
+  it('preserves specific Hevy tags and only refines coarse tags', () => {
+    expect(
+      resolveMuscles({
+        id: 'lat-row',
+        title: 'Lat Row',
+        primary_muscle_group: 'lats',
+      }).primary,
+    ).toBe('lats');
+    expect(
+      resolveMuscles({
+        id: 'cable-row',
+        title: 'Seated Cable Row',
+        primary_muscle_group: 'upper_back',
+      }).primary,
+    ).toBe('upper_back');
+    expect(
+      resolveMuscles({
+        id: 'arnold-press',
+        title: 'Arnold Press',
+        primary_muscle_group: 'shoulders',
+      }).primary,
+    ).toBe('delts_front');
+  });
+
   it('splits coarse shoulder templates by movement title', () => {
     expect(
       resolveMuscles({

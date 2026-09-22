@@ -1,5 +1,6 @@
 import type { Finding } from './findings';
 import type { HevyWorkout } from './hevy-types';
+import { localDayKey, localMondayStart } from './time';
 
 export type NoteCategory = 'pain' | 'recovery' | 'time' | 'intent';
 
@@ -33,12 +34,10 @@ const NOTE_PATTERNS: Array<{ category: NoteCategory; pattern: RegExp }> = [
 ];
 
 const NOTE_RECOMMENDATIONS: Record<NoteCategory, string> = {
-  pain:
-    'Athlete reported discomfort; consider a joint-friendlier variation and seek assessment if it persists.',
+  pain: 'Athlete reported discomfort; consider a joint-friendlier variation and seek assessment if it persists.',
   recovery:
     'Treat this as recovery context when judging performance; keep the next exposure conservative if it repeats.',
-  time:
-    'Treat this as a time-constrained session when comparing volume or progression with a normal workout.',
+  time: 'Treat this as a time-constrained session when comparing volume or progression with a normal workout.',
   intent:
     'Treat this as an intentional lower-stress exposure rather than a normal progression test.',
 };
@@ -48,20 +47,22 @@ function clean(value: string | null | undefined) {
 }
 
 export function noteCategory(text: string): NoteCategory | null {
-  return NOTE_PATTERNS.find((item) => item.pattern.test(text))?.category ?? null;
+  return (
+    NOTE_PATTERNS.find((item) => item.pattern.test(text))?.category ?? null
+  );
 }
 
-function weekStartFor(value: string) {
+export function weekStartFor(value: string, timeZone = 'UTC') {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return value;
-  date.setUTCHours(0, 0, 0, 0);
-  const day = date.getUTCDay();
-  date.setUTCDate(date.getUTCDate() - (day === 0 ? 6 : day - 1));
-  return date.toISOString();
+  return localMondayStart(date, timeZone).toISOString();
 }
 
-export function extractWorkoutNotes(workout: HevyWorkout): WorkoutNote[] {
-  const workoutDate = workout.start_time.slice(0, 10);
+export function extractWorkoutNotes(
+  workout: HevyWorkout,
+  timeZone = 'UTC',
+): WorkoutNote[] {
+  const workoutDate = localDayKey(new Date(workout.start_time), timeZone);
   const notes: WorkoutNote[] = [];
   const description = clean(workout.description);
   if (description) {
@@ -93,9 +94,12 @@ export function extractWorkoutNotes(workout: HevyWorkout): WorkoutNote[] {
 
 export function flagNotes(
   workout: HevyWorkout,
-  weekStart = weekStartFor(workout.start_time),
+  weekStart?: string,
+  timeZone = 'UTC',
 ): Finding[] {
-  return extractWorkoutNotes(workout).flatMap((note, index) => {
+  const resolvedWeekStart =
+    weekStart ?? weekStartFor(workout.start_time, timeZone);
+  return extractWorkoutNotes(workout, timeZone).flatMap((note, index) => {
     if (!note.category) return [];
     const exerciseLabel = note.exerciseTitle ?? 'Workout note';
     const subjectKey = `${note.workoutId}:${note.exerciseTemplateId ?? 'workout'}:${index}`;
@@ -121,7 +125,7 @@ export function flagNotes(
         },
         recommendation: NOTE_RECOMMENDATIONS[note.category],
         citations: [note.workoutId],
-        firstSeenWeek: weekStart,
+        firstSeenWeek: resolvedWeekStart,
       } satisfies Finding,
     ];
   });
@@ -131,7 +135,8 @@ export function painSuppressedExerciseTemplateIds(
   workouts: HevyWorkout[],
 ): string[] {
   const sorted = [...workouts].sort(
-    (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime(),
+    (a, b) =>
+      new Date(a.start_time).getTime() - new Date(b.start_time).getTime(),
   );
   const result = new Set<string>();
   for (const noteWorkout of sorted) {
