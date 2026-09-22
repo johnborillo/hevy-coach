@@ -23,6 +23,12 @@ import {
 } from './progression';
 import { suggestSlots, type ExerciseSlot, type SlotSuggestion } from './slots';
 import { classifySet } from './sets';
+import {
+  detectRecords,
+  selectRecentRecords,
+  type PersonalRecord,
+  type RecordKind,
+} from './records';
 
 export type TrendPoint = { date: string; value: number; label: string };
 
@@ -107,6 +113,10 @@ export type DashboardData = {
     valueKg: number;
     reps: number;
     weightKg: number;
+    kind: RecordKind;
+    previousValue: number | null;
+    previousDate: string | null;
+    scope: PersonalRecord['scope'];
   }>;
   exerciseStats: Array<{
     exerciseTemplateId: string;
@@ -506,32 +516,28 @@ export function analyzeWorkoutHistory(
     };
   });
 
-  const records = [...histories.values()]
-    .flatMap((history) => {
-      const best = history
-        .filter(
-          (point) =>
-            daysAgo(point.date, nowMs) >= 0 && daysAgo(point.date, nowMs) <= 30,
-        )
-        .sort(
-          (a, b) =>
-            b.value - a.value ||
-            new Date(b.date).getTime() - new Date(a.date).getTime(),
-        )[0];
-      return best
-        ? [
-            {
-              exercise: best.title,
-              date: formatShortDate(best.date),
-              valueKg: Math.round(best.value * 10) / 10,
-              reps: best.reps,
-              weightKg: best.weightKg,
-            },
-          ]
-        : [];
-    })
-    .sort((a, b) => b.valueKg - a.valueKg)
-    .slice(0, 5);
+  const personalRecords = detectRecords(
+    sorted,
+    templates,
+    muscleOverrides,
+    exerciseSlots,
+  );
+  const records = selectRecentRecords(personalRecords, now, { limit: 5 }).map(
+    (record) => ({
+      exercise: record.exercise,
+      date: formatShortDate(record.performedAt),
+      valueKg:
+        record.kind === 'reps_at_load' ? record.loadKg : record.value,
+      reps: record.reps,
+      weightKg: record.loadKg,
+      kind: record.kind,
+      previousValue: record.previousValue,
+      previousDate: record.previousAt
+        ? formatShortDate(record.previousAt)
+        : null,
+      scope: record.scope,
+    }),
+  );
 
   const exerciseStats = [...exerciseTotals.entries()]
     .map(([id, totals]) => {
@@ -1009,6 +1015,10 @@ function demoData(
         valueKg: 96.1,
         reps: 6,
         weightKg: 80,
+        kind: 'e1rm',
+        previousValue: 94.5,
+        previousDate: 'Aug 31',
+        scope: 'template',
       },
       {
         exercise: 'Squat (Barbell)',
@@ -1016,6 +1026,10 @@ function demoData(
         valueKg: 138.4,
         reps: 5,
         weightKg: 118,
+        kind: 'e1rm',
+        previousValue: 136.8,
+        previousDate: 'Aug 29',
+        scope: 'template',
       },
     ],
     exerciseStats: [
@@ -1216,6 +1230,22 @@ export async function getDashboardData(
         );
       } catch (error) {
         console.error('Progression state cache could not be refreshed', {
+          message: error instanceof Error ? error.message : 'unknown',
+        });
+      }
+      try {
+        const { savePersonalRecords } = await import('./records-repo');
+        await savePersonalRecords(
+          userId,
+          detectRecords(
+            workouts,
+            templateRows.map(deserializeHevyTemplate),
+            overrides,
+            slots,
+          ),
+        );
+      } catch (error) {
+        console.error('Personal record cache could not be refreshed', {
           message: error instanceof Error ? error.message : 'unknown',
         });
       }

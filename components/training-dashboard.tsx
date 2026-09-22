@@ -127,13 +127,13 @@ const PROGRESS_HELP = {
   primaryLiftTrend:
     'The change from the first to the latest estimated one-rep max across up to eight logged sessions for the exercise selected below. Use it as a direction-of-travel signal, not a tested max.',
   recentEstimatedPrs:
-    'How many exercises appear on the board below, up to five. Each uses that exercise’s strongest estimated one-rep max from the past 30 days.',
+    'How many verified personal-record signals appear on the board below, up to five. The board waits for five prior sessions and then tracks the best comparable signal for each exercise or variation slot.',
   trainingFrequency:
     'Your logged Hevy sessions from the past 30 days converted to an average number of workouts per week.',
   estimatedStrength:
     'An estimated one-rep max (e1RM) calculated with the Epley formula from compound sets of 1–8 reps. Isolation, dropset, assisted, timed, and distance work is excluded to keep the signal meaningful.',
   estimatedPrBoard:
-    'Up to five exercises ranked by their best estimated one-rep max from the past 30 days. Each row shows the source set and date. These are calculated estimates, not necessarily tested or all-time personal records.',
+    'Up to five real personal records from the past 30 days. A record is only shown after five prior sessions for that exercise or variation slot, and can be an estimated one-rep max, load at a rep range, or reps at a repeatable load.',
   muscleDistribution:
     'Working sets are assigned to a detailed muscle map. Primary muscles count as direct sets; secondary muscles count as half an indirect set. Zero-volume muscles stay visible, and the comparison uses the preceding window of the same length.',
   exercisePerformance:
@@ -1340,9 +1340,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 help={PROGRESS_HELP.primaryLiftTrend}
               />
               <StatCard
-                label="Recent estimated PRs"
+                label="Recent PRs"
                 value={String(data.records.length)}
-                detail="Best e1RM in the last 30 days"
+                detail="Verified signals · last 30 days"
                 icon={Trophy}
                 help={PROGRESS_HELP.recentEstimatedPrs}
               />
@@ -1436,7 +1436,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                   </ResponsiveContainer>
                 </div>
                 <p className="chart-note">
-                  Epley estimate from sets of 15 reps or fewer. Use the
+                  Epley estimate from eligible compound sets of 8 reps or fewer. Use the
                   direction as a signal, not the decimal as a tested max.
                 </p>
               </article>
@@ -1461,12 +1461,18 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                         <div>
                           <strong>{record.exercise}</strong>
                           <small>
-                            {record.weightKg
-                              ? `${weight(record.weightKg, unit)} × ${record.reps} · ${record.date}`
-                              : record.date}
+                            {record.kind === 'reps_at_load'
+                              ? `${record.reps} reps @ ${weight(record.weightKg, unit)} · ${record.date}`
+                              : `${weight(record.weightKg, unit)} × ${record.reps} · ${record.date}`}
                           </small>
                         </div>
-                        <b>{weight(record.valueKg, unit)} e1RM</b>
+                        <b>
+                          {record.kind === 'e1rm'
+                            ? `${weight(record.valueKg, unit)} e1RM`
+                            : record.kind === 'load_at_reps'
+                              ? `${weight(record.valueKg, unit)} load PR`
+                              : `${record.reps} rep PR`}
+                        </b>
                       </div>
                     ))}
                   </div>
