@@ -1,6 +1,7 @@
 import { getDashboardData } from '@/lib/hevy';
 import { adjustProgramWithCoach, generateProgramWithCoach } from '@/lib/openrouter';
 import type { ProgramRequest } from '@/lib/program';
+import { buildContinuationProgram } from '@/lib/program-continuation';
 import { normalizeProgramV2, type ProgramMetadata } from '@/lib/program-v2';
 import { requestUserId } from '@/lib/request-user';
 import {
@@ -81,14 +82,39 @@ export async function POST(request: Request) {
         );
       }
     } catch (error) {
-      console.error('Program AI failed; no program was saved', {
+      console.error('Program AI failed; trying a continuation program', {
         name: error instanceof Error ? error.name : 'unknown',
         message: error instanceof Error ? error.message : 'unknown',
       });
     }
     if (!generated) {
+      const { listStoredHevyWorkouts, listStoredTemplates } =
+        await import('@/lib/hevy-repo');
+      const { deserializeHevyTemplate } = await import('@/lib/hevy-store');
+      const { listMuscleOverrides } = await import('@/lib/muscle-repo');
+      const [workouts, templateRows, overrides] = await Promise.all([
+        listStoredHevyWorkouts(userId, { limit: 300 }),
+        listStoredTemplates(userId),
+        listMuscleOverrides(userId),
+      ]);
+      const continuation = buildContinuationProgram(
+        input,
+        profile,
+        dashboard,
+        workouts,
+        templateRows.map(deserializeHevyTemplate),
+        overrides,
+      );
+      generated = continuation
+        ? normalizeProgram(continuation, input, profile, dashboard)
+        : null;
+    }
+    if (!generated) {
       return Response.json(
-        { error: 'Program generation needs the AI provider; retry.' },
+        {
+          error:
+            'Program generation needs the AI provider right now — retry.',
+        },
         { status: 503 },
       );
     }
