@@ -156,6 +156,23 @@ const STARTERS = [
   'How should I return after three weeks off?',
 ];
 
+const COMMON_TIMEZONES = [
+  'UTC',
+  'America/Toronto',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'Europe/London',
+  'Europe/Paris',
+  'Asia/Tokyo',
+  'Australia/Sydney',
+];
+
+function browserTimeZone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+}
+
 const PROGRESS_HELP = {
   workingSets:
     'Working and failure sets logged in the most recent 7 days. Warm-ups are excluded and dropsets count as half a set so the total better reflects training stimulus.',
@@ -824,7 +841,19 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
         trainingBlockPayload,
       ]) => {
         if (profilePayload?.profile) {
-          setProfile(profilePayload.profile);
+          const detectedTimeZone = browserTimeZone();
+          const looksUnsaved =
+            profilePayload.profile.timezone === 'UTC' &&
+            profilePayload.profile.displayName === 'Athlete' &&
+            profilePayload.profile.age === null &&
+            profilePayload.profile.heightCm === null &&
+            profilePayload.profile.weightKg === null;
+          setProfile({
+            ...profilePayload.profile,
+            timezone: looksUnsaved
+              ? detectedTimeZone
+              : profilePayload.profile.timezone,
+          });
           setProgramForm((current) => ({
             ...current,
             goal: profilePayload.profile.primaryGoal,
@@ -2231,10 +2260,15 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                                       </small>
                                     </div>
                                     <div className="progression-sparkline">
-                                      <span>Reps at working load</span>
+                                      <span>
+                                        {exercise.performanceMetric ===
+                                        'trend_e1rm'
+                                          ? 'Trend e1RM'
+                                          : 'Best set (kg × reps)'}
+                                      </span>
                                       <div>
                                         <MiniSparkline
-                                          values={exercise.repsAtModalLoad}
+                                          values={exercise.performanceIndex}
                                         />
                                       </div>
                                     </div>
@@ -3336,13 +3370,26 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                   </label>
                   <label>
                     <span>Timezone</span>
-                    <input
+                    <select
                       value={profile.timezone}
                       onChange={(event) =>
                         setProfile({ ...profile, timezone: event.target.value })
                       }
-                      placeholder="America/Toronto"
-                    />
+                    >
+                      {[
+                        ...new Set([
+                          profile.timezone,
+                          browserTimeZone(),
+                          ...COMMON_TIMEZONES,
+                        ]),
+                      ]
+                        .filter(Boolean)
+                        .map((timeZone) => (
+                          <option key={timeZone} value={timeZone}>
+                            {timeZone.replaceAll('_', ' ')}
+                          </option>
+                        ))}
+                    </select>
                   </label>
                   <div className="span-two profile-subsection-label">
                     <span>Smallest practical load increment ({unit})</span>

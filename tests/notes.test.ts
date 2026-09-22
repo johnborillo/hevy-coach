@@ -83,6 +83,7 @@ describe('Hevy note ingestion', () => {
           rpeCoverage: 1,
           lastSetRpe: [9, 9.5],
           rpeSlope: 0.3,
+          performanceMetric: 'trend_e1rm',
           performanceIndex: [90, 90, 89, 88, 87, 86],
           performanceSlopePct: -1.5,
           sessionsSinceImprovement: 4,

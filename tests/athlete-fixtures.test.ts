@@ -62,7 +62,7 @@ describe.each(Object.entries(ATHLETE_FIXTURES))(
 );
 
 describe('current analysis regression baseline', () => {
-  it('pins the version five analysis output', () => {
+  it('pins the version six analysis output', () => {
     const summaries = Object.fromEntries(
       Object.entries(ATHLETE_FIXTURES).map(([name, fixture]) => {
         const dashboard = analyzeWorkoutHistory(
@@ -89,9 +89,9 @@ describe('current analysis regression baseline', () => {
     expect(summaries).toEqual({
       novice: {
         sessions30d: 12,
-        workingSets7d: 27,
+        workingSets7d: 18,
         totalVolume30dKg: 58_230,
-        volumeChangePercent: 1.5,
+        volumeChangePercent: -28.8,
         trendExercise: 'Squat (Barbell)',
         trendChange: 0.76,
         recordExercises: [
@@ -103,12 +103,12 @@ describe('current analysis regression baseline', () => {
         ],
       },
       intermediate: {
-        sessions30d: 17,
-        workingSets7d: 42,
-        totalVolume30dKg: 136_062,
-        volumeChangePercent: 9.9,
+        sessions30d: 16,
+        workingSets7d: 31,
+        totalVolume30dKg: 127_429,
+        volumeChangePercent: -15.3,
         trendExercise: 'Romanian Deadlift (Barbell)',
-        trendChange: 0.13,
+        trendChange: 0.6,
         recordExercises: [
           'Lat Pulldown (Cable)',
           'Seated Row (Machine)',
@@ -118,10 +118,10 @@ describe('current analysis regression baseline', () => {
         ],
       },
       advanced: {
-        sessions30d: 21,
-        workingSets7d: 57.5,
-        totalVolume30dKg: 167_163,
-        volumeChangePercent: 0.9,
+        sessions30d: 20,
+        workingSets7d: 47,
+        totalVolume30dKg: 154_798,
+        volumeChangePercent: -12.6,
         trendExercise: 'Squat (Barbell)',
         trendChange: 0,
         recordExercises: [

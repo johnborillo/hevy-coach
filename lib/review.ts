@@ -11,21 +11,14 @@ import {
   listWeeklyReviews,
   saveWeeklyReview,
 } from './review-repo';
+import { localDayKey, localMondayStart, shiftLocalDays } from './time';
 
-const WEEK = 7 * 86_400_000;
-
-export function mondayStart(value: Date) {
-  const start = new Date(value);
-  start.setUTCHours(0, 0, 0, 0);
-  const day = start.getUTCDay();
-  start.setUTCDate(start.getUTCDate() - (day === 0 ? 6 : day - 1));
-  return start;
+export function mondayStart(value: Date, timeZone = 'UTC') {
+  return localMondayStart(value, timeZone);
 }
 
-export function closedWeekStart(now = new Date()) {
-  const current = mondayStart(now);
-  current.setUTCDate(current.getUTCDate() - 7);
-  return current;
+export function closedWeekStart(now = new Date(), timeZone = 'UTC') {
+  return shiftLocalDays(mondayStart(now, timeZone), -7, timeZone);
 }
 
 function inWindow(value: string, start: number, end: number) {
@@ -45,9 +38,16 @@ function blockForDate(blocks: TrainingBlock[], date: number) {
   );
 }
 
-function weekTotals(dashboard: DashboardData, start: number, end: number) {
-  const workouts = dashboard.calendarWorkouts.filter((workout) =>
-    inWindow(`${workout.date}T12:00:00.000Z`, start, end),
+function weekTotals(
+  dashboard: DashboardData,
+  start: number,
+  end: number,
+  timeZone: string,
+) {
+  const startKey = localDayKey(new Date(start), timeZone);
+  const endKey = localDayKey(new Date(end - 1), timeZone);
+  const workouts = dashboard.calendarWorkouts.filter(
+    (workout) => workout.date >= startKey && workout.date <= endKey,
   );
   return {
     sessions: new Set(workouts.map((workout) => workout.id)).size,
@@ -72,8 +72,8 @@ function reviewContext(
   painSuppressedSlotIds: string[],
 ): FindingContext {
   const start = weekStart.getTime();
-  const end = start + WEEK;
-  const totals = weekTotals(dashboard, start, end);
+  const end = shiftLocalDays(weekStart, 7, profile.timezone).getTime();
+  const totals = weekTotals(dashboard, start, end, profile.timezone);
   const planned = profile.daysPerWeek;
   return {
     weekStart: weekStart.toISOString(),
@@ -123,19 +123,17 @@ export async function generateWeeklyReview(
   const start = new Date(weekStart);
   const startMs = start.getTime();
   if (!Number.isFinite(startMs)) throw new Error('Invalid review week.');
-  const endMs = startMs + WEEK;
-  const [workouts, templateRows, profile, blocks, overrides, slots] =
-    await Promise.all([
-      listStoredHevyWorkouts(userId, { limit: 5_000 }),
-      listStoredTemplates(userId),
-      getProfile(userId),
-      listTrainingBlocks(userId),
-      (async () =>
-        (await import('./muscle-repo')).listMuscleOverrides(userId))(),
-      (async () => (await import('./slot-repo')).listExerciseSlots(userId))(),
-    ]);
+  const profile = await getProfile(userId);
+  const endMs = shiftLocalDays(start, 7, profile.timezone).getTime();
+  const [workouts, templateRows, blocks, overrides, slots] = await Promise.all([
+    listStoredHevyWorkouts(userId, { limit: 5_000 }),
+    listStoredTemplates(userId),
+    listTrainingBlocks(userId),
+    (async () => (await import('./muscle-repo')).listMuscleOverrides(userId))(),
+    (async () => (await import('./slot-repo')).listExerciseSlots(userId))(),
+  ]);
   const templates = templateRows.map(deserializeHevyTemplate);
-  const activeBlock = blockForDate(blocks, startMs + WEEK / 2);
+  const activeBlock = blockForDate(blocks, startMs + (endMs - startMs) / 2);
   const records = detectRecords(workouts, templates, overrides, slots);
   const dashboard = analyzeWorkoutHistory(
     workouts,
@@ -147,19 +145,30 @@ export async function generateWeeklyReview(
     profile.daysPerWeek,
     profile.phase,
     activeBlock?.kind ?? null,
+    profile.timezone,
   );
   const citations = workouts
     .filter((workout) => inWindow(workout.start_time, startMs, endMs))
     .map((workout) => workout.id);
   const noteFlags = workouts
     .filter((workout) => inWindow(workout.start_time, startMs, endMs))
-    .flatMap((workout) => flagNotes(workout, start.toISOString()));
+    .flatMap((workout) =>
+      flagNotes(workout, start.toISOString(), profile.timezone),
+    );
   const painSuppressed = painSuppressedExerciseTemplateIds(workouts);
   const painSuppressedSlots = dashboard.exerciseSlots
-    .filter((slot) => slot.templateIds.some((id) => painSuppressed.includes(id)))
+    .filter((slot) =>
+      slot.templateIds.some((id) => painSuppressed.includes(id)),
+    )
     .map((slot) => slot.id);
-  const priorTotals = weekTotals(dashboard, startMs - WEEK, startMs);
-  const currentTotals = weekTotals(dashboard, startMs, endMs);
+  const priorStart = shiftLocalDays(start, -7, profile.timezone);
+  const priorTotals = weekTotals(
+    dashboard,
+    priorStart.getTime(),
+    startMs,
+    profile.timezone,
+  );
+  const currentTotals = weekTotals(dashboard, startMs, endMs, profile.timezone);
   const volumeChangePercent = priorTotals.volumeKg
     ? Math.round(
         ((currentTotals.volumeKg - priorTotals.volumeKg) /
@@ -167,10 +176,7 @@ export async function generateWeeklyReview(
           100,
       )
     : 0;
-  const previous = await getWeeklyReview(
-    userId,
-    new Date(startMs - WEEK).toISOString(),
-  );
+  const previous = await getWeeklyReview(userId, priorStart.toISOString());
   const review = composeWeeklyReview(
     reviewContext(
       dashboard,
@@ -194,7 +200,8 @@ export async function ensurePreviousWeekReview(
   userId: string,
   now = new Date(),
 ) {
-  const week = closedWeekStart(now);
+  const profile = await getProfile(userId);
+  const week = closedWeekStart(now, profile.timezone);
   return generateWeeklyReview(userId, week.toISOString());
 }
 

@@ -91,6 +91,14 @@ const HEVY_MUSCLE_MAP: Record<string, Muscle> = {
   upper_back: 'upper_back',
 };
 
+const COARSE_TAGS = new Set([
+  'shoulders',
+  'chest',
+  'upper_back',
+  'full_body',
+  'other',
+]);
+
 function normalize(value: string | undefined) {
   return value?.trim().toLowerCase().replaceAll(' ', '_') ?? '';
 }
@@ -148,7 +156,11 @@ export function resolveMuscles(
   }
 
   const mappedPrimary = canonicalMuscle(template.primary_muscle_group);
-  const primary = titlePrimary(template.title, mappedPrimary ?? 'other');
+  const rawPrimary = normalize(template.primary_muscle_group);
+  const primary =
+    mappedPrimary && !COARSE_TAGS.has(rawPrimary)
+      ? mappedPrimary
+      : titlePrimary(template.title, mappedPrimary ?? 'other');
   const secondary = [
     ...new Set(
       (template.secondary_muscle_groups ?? [])

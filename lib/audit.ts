@@ -1,4 +1,10 @@
 import { MUSCLES, muscleLabel, type Muscle } from './muscles';
+import {
+  localMondayStart,
+  localWindowStart,
+  safeTimeZone,
+  shiftLocalDays,
+} from './time';
 
 export type AuditObservation = {
   workoutId: string;
@@ -38,14 +44,6 @@ export type AdherenceWeek = {
   adherencePct: number;
 };
 
-function weekStart(value: Date) {
-  const date = new Date(value);
-  const day = date.getUTCDay();
-  date.setUTCHours(0, 0, 0, 0);
-  date.setUTCDate(date.getUTCDate() - (day === 0 ? 6 : day - 1));
-  return date;
-}
-
 function round(value: number) {
   return Math.round(value * 10) / 10;
 }
@@ -66,18 +64,21 @@ export function computeMuscleAudit(
   observations: AuditObservation[],
   now = new Date(),
   windowDays = 7,
+  timeZone = 'UTC',
 ): MuscleAudit[] {
   const nowMs = now.getTime();
-  const current = new Map<Muscle, { direct: number; indirect: number; sessions: Set<string> }>();
+  const athleteTimeZone = safeTimeZone(timeZone);
+  const current = new Map<
+    Muscle,
+    { direct: number; indirect: number; sessions: Set<string> }
+  >();
   const previous = new Map<Muscle, number>();
   const weekly = new Map<Muscle, number[]>();
-  const currentWeek = weekStart(now);
+  const currentWeek = localMondayStart(now, athleteTimeZone);
 
   for (let weekOffset = 0; weekOffset < 8; weekOffset += 1) {
-    const start = new Date(currentWeek);
-    start.setUTCDate(start.getUTCDate() - weekOffset * 7);
-    const end = new Date(start);
-    end.setUTCDate(end.getUTCDate() + 7);
+    const start = shiftLocalDays(currentWeek, -weekOffset * 7, athleteTimeZone);
+    const end = shiftLocalDays(start, 7, athleteTimeZone);
     const totals = new Map<Muscle, number>();
     for (const observation of observations) {
       const time = new Date(observation.performedAt).getTime();
@@ -94,10 +95,20 @@ export function computeMuscleAudit(
     }
   }
 
+  const currentStart = localWindowStart(
+    now,
+    windowDays,
+    athleteTimeZone,
+  ).getTime();
+  const previousStart = localWindowStart(
+    now,
+    windowDays * 2,
+    athleteTimeZone,
+  ).getTime();
   for (const observation of observations) {
-    const age = (nowMs - new Date(observation.performedAt).getTime()) / 86_400_000;
-    const isCurrent = age >= 0 && age <= windowDays;
-    const isPrevious = age > windowDays && age <= windowDays * 2;
+    const time = new Date(observation.performedAt).getTime();
+    const isCurrent = time >= currentStart && time <= nowMs;
+    const isPrevious = time >= previousStart && time < currentStart;
     if (!isCurrent && !isPrevious) continue;
     if (isCurrent) {
       const entry = current.get(observation.primary) ?? {
@@ -168,13 +179,23 @@ function ratioSignal(
     numerator: round(numerator),
     denominator: round(denominator),
     typicalRange,
-    status: value == null ? 'no_data' : value < low || value > high ? 'watch' : 'balanced',
+    status:
+      value == null
+        ? 'no_data'
+        : value < low || value > high
+          ? 'watch'
+          : 'balanced',
     explanation,
   };
 }
 
 export function computeBalance(audit: MuscleAudit[]): BalanceSignal[] {
-  const push = sum(audit, ['chest_upper', 'chest_mid_lower', 'delts_front', 'triceps']);
+  const push = sum(audit, [
+    'chest_upper',
+    'chest_mid_lower',
+    'delts_front',
+    'triceps',
+  ]);
   const pull = sum(audit, ['lats', 'upper_back', 'delts_rear', 'biceps']);
   const quads = sum(audit, ['quads']);
   const hamstrings = sum(audit, ['hamstrings']);
@@ -245,7 +266,8 @@ export function computeBalance(audit: MuscleAudit[]): BalanceSignal[] {
       denominator: 0,
       typicalRange: ' > 0 sets',
       status: calves === 0 ? 'watch' : 'balanced',
-      explanation: 'Keeps a commonly missed lower-leg muscle visible in the audit.',
+      explanation:
+        'Keeps a commonly missed lower-leg muscle visible in the audit.',
     },
   ];
 }
@@ -254,13 +276,13 @@ export function computeAdherence(
   workoutDates: Array<{ id: string; performedAt: string }>,
   plannedSessions: number,
   now = new Date(),
+  timeZone = 'UTC',
 ): AdherenceWeek[] {
-  const current = weekStart(now);
+  const athleteTimeZone = safeTimeZone(timeZone);
+  const current = localMondayStart(now, athleteTimeZone);
   return Array.from({ length: 8 }, (_, index) => {
-    const start = new Date(current);
-    start.setUTCDate(start.getUTCDate() - (7 - index) * 7);
-    const end = new Date(start);
-    end.setUTCDate(end.getUTCDate() + 7);
+    const start = shiftLocalDays(current, -(7 - index) * 7, athleteTimeZone);
+    const end = shiftLocalDays(start, 7, athleteTimeZone);
     const ids = new Set(
       workoutDates
         .filter((workout) => {
@@ -275,6 +297,7 @@ export function computeAdherence(
       label: new Intl.DateTimeFormat('en-CA', {
         month: 'short',
         day: 'numeric',
+        timeZone: athleteTimeZone,
       }).format(start),
       plannedSessions,
       actualSessions,

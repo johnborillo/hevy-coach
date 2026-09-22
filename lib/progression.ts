@@ -18,6 +18,8 @@ export type ProgressionRecommendation =
   | 'log_rpe'
   | 'none';
 
+export type PerformanceMetric = 'trend_e1rm' | 'best_set_load_reps';
+
 export type ProgressionSession = {
   performedAt: string;
   sets: ClassifiedSet[];
@@ -38,6 +40,7 @@ export type ProgressionState = {
   rpeCoverage: number;
   lastSetRpe: number[];
   rpeSlope: number | null;
+  performanceMetric: PerformanceMetric;
   performanceIndex: number[];
   performanceSlopePct: number | null;
   sessionsSinceImprovement: number;
@@ -132,6 +135,9 @@ function rationale(
     return `${state.sessionsSinceImprovement} sessions have passed without improvement while recent effort is near failure.`;
   }
   if (recommendation === 'swap_or_rotate') {
+    if (state.rpeCoverage < 0.5) {
+      return `${state.sessionsSinceImprovement} sessions without improvement and no effort data logged; a small variation change is the safest lever until RPE is recorded.`;
+    }
     return `${state.sessionsSinceImprovement} sessions have passed without a clear improvement; consider a small variation change.`;
   }
   if (recommendation === 'reduce_volume') {
@@ -155,6 +161,7 @@ export function computeProgression(
       | 'maintenance'
       | 'custom'
       | null;
+    metric?: PerformanceMetric;
   } = {},
 ): ProgressionState {
   const sessions = [...inputSessions]
@@ -168,6 +175,13 @@ export function computeProgression(
       sets: session.sets.filter((set) => set.countsAsWorking > 0),
     }))
     .filter((session) => session.sets.length > 0);
+  const performanceMetric: PerformanceMetric =
+    options.metric ??
+    (inputSessions.some((session) =>
+      session.sets.some((set) => set.e1rmEligible),
+    )
+      ? 'trend_e1rm'
+      : 'best_set_load_reps');
   const recentLoadSets = sessions
     .slice(-3)
     .flatMap((session) => session.sets)
@@ -179,6 +193,13 @@ export function computeProgression(
     recentLoadSets.map((set) => set.loadKg),
   );
   const repsAtModalLoad = sessions
+    .filter(
+      (session) =>
+        performanceMetric !== 'trend_e1rm' ||
+        session.sets.some(
+          (set) => set.reps !== null && set.reps >= 1 && set.reps <= 12,
+        ),
+    )
     .map((session) =>
       Math.max(
         0,
@@ -208,25 +229,22 @@ export function computeProgression(
     )
     .filter((value): value is number => value !== null);
   const rpeSlope = rpeCoverage >= 0.5 ? theilSen(lastSetRpe.slice(-6)) : null;
-  const performanceIndex = sessions.map((session) => {
-    const e1rm = session.sets
-      .map((set) => set.e1rmKg)
-      .filter((value): value is number => value !== null);
-    if (e1rm.length) return Math.max(...e1rm);
-    const modalPerformance = session.sets
-      .filter(
-        (set) =>
-          set.loadKg !== null &&
-          Math.abs(set.loadKg - modalLoadKg) < 0.01 &&
-          set.reps !== null,
-      )
-      .map((set) => (set.loadKg ?? 0) * (set.reps ?? 0));
-    if (modalPerformance.length) return Math.max(...modalPerformance);
-    return Math.max(
-      0,
-      ...session.sets.map((set) => (set.loadKg ?? 0) * (set.reps ?? 0)),
-    );
-  });
+  const performanceIndex = sessions
+    .map((session) => {
+      const values = session.sets.flatMap((set) => {
+        if (set.loadKg === null || set.loadKg <= 0 || set.reps === null) {
+          return [];
+        }
+        if (performanceMetric === 'trend_e1rm') {
+          return set.reps >= 1 && set.reps <= 12
+            ? [set.loadKg * (1 + set.reps / 30)]
+            : [];
+        }
+        return [set.loadKg * set.reps];
+      });
+      return values.length ? Math.max(...values) : null;
+    })
+    .filter((value): value is number => value !== null);
   const performanceSlope =
     performanceIndex.length >= 5 ? theilSen(performanceIndex) : null;
   const performanceMean = performanceIndex.length
@@ -250,11 +268,13 @@ export function computeProgression(
     modalLoadCount / Math.max(recentLoadSets.length, 1) < 0.5;
 
   let status: ProgressionStatus;
-  if (sessions.length < 4) status = 'insufficient_data';
+  if (performanceIndex.length < 4) status = 'insufficient_data';
   else if (variableLoad) status = 'variable_load';
   else if ((performanceSlopePct ?? 0) > 0.75 || sinceImprovement <= 1) {
     status = 'progressing';
   } else if (sinceImprovement >= 4 && (rpeSlope ?? 0) >= 0.25) {
+    status = 'stalled';
+  } else if (sinceImprovement >= 6 && rpeSlope === null) {
     status = 'stalled';
   } else if (
     performanceSlopePct !== null &&
@@ -349,6 +369,7 @@ export function computeProgression(
     rpeCoverage: round(rpeCoverage, 3),
     lastSetRpe,
     rpeSlope: rpeSlope === null ? null : round(rpeSlope, 3),
+    performanceMetric,
     performanceIndex: performanceIndex.map((value) => round(value)),
     performanceSlopePct:
       performanceSlopePct === null ? null : round(performanceSlopePct),
