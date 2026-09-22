@@ -36,7 +36,6 @@ import {
   type AdherenceWeek,
   type BalanceSignal,
 } from './audit';
-import type { BodyWeightPoint } from './body-weight-repo';
 import type { TrainingBlock } from './training-block-repo';
 import type { WeeklyReview } from './findings';
 import {
@@ -229,6 +228,87 @@ function durationMinutes(workout: HevyWorkout) {
 function percentChange(current: number, previous: number) {
   if (!previous) return current ? 100 : 0;
   return Math.round(((current - previous) / previous) * 1000) / 10;
+}
+
+export function buildCalendarWorkouts(
+  workouts: HevyWorkout[],
+  templates: ExerciseTemplate[],
+  timeZone = 'UTC',
+  muscleOverrides: MuscleOverride[] = [],
+): CalendarWorkout[] {
+  const athleteTimeZone = safeTimeZone(timeZone);
+  const templateMap = new Map(templates.map((item) => [item.id, item]));
+  const overrideMap = new Map(
+    muscleOverrides.map((item) => [item.exerciseTemplateId, item]),
+  );
+  const classify = (exercise: HevyExercise, set: HevySet) => {
+    const template = templateMap.get(exercise.exercise_template_id);
+    return classifySet(set, {
+      title: exercise.title,
+      equipment: template?.equipment,
+      primary_muscle_group: template?.primary_muscle_group,
+    });
+  };
+  const resolvedFor = (exercise: HevyExercise) =>
+    resolveMuscles(
+      templateMap.get(exercise.exercise_template_id) ?? {
+        id: exercise.exercise_template_id,
+        title: exercise.title,
+        is_custom: true,
+      },
+      overrideMap.get(exercise.exercise_template_id),
+    );
+
+  return [...workouts]
+    .sort(
+      (a, b) =>
+        new Date(b.start_time).getTime() - new Date(a.start_time).getTime(),
+    )
+    .map((workout) => {
+      const exercises = workout.exercises.map((exercise) => {
+        const classified = exercise.sets.map((set) => classify(exercise, set));
+        return {
+          title: exercise.title,
+          muscle: muscleLabel(resolvedFor(exercise).primary),
+          notes: exercise.notes ?? null,
+          sets: exercise.sets.map((set) => ({
+            type: set.type ?? 'normal',
+            weightKg: set.weight_kg ?? null,
+            reps: set.reps ?? null,
+            rpe: set.rpe ?? null,
+          })),
+          workingSets: classified.reduce(
+            (sum, set) => sum + set.countsAsWorking,
+            0,
+          ),
+          volumeKg: classified.reduce(
+            (sum, set) => sum + (set.loadVolumeKg ?? 0),
+            0,
+          ),
+        };
+      });
+      return {
+        id: workout.id,
+        title: workout.title,
+        description: workout.description ?? null,
+        date: localDayKey(new Date(workout.start_time), athleteTimeZone),
+        time: formatTime(workout.start_time, athleteTimeZone),
+        durationMinutes: Math.round(durationMinutes(workout)),
+        workingSets: exercises.reduce(
+          (sum, exercise) => sum + exercise.workingSets,
+          0,
+        ),
+        volumeKg: Math.round(
+          exercises.reduce((sum, exercise) => sum + exercise.volumeKg, 0),
+        ),
+        exercises: exercises.map((exercise) => ({
+          title: exercise.title,
+          muscle: exercise.muscle,
+          notes: exercise.notes,
+          sets: exercise.sets,
+        })),
+      };
+    });
 }
 
 export function analyzeWorkoutHistory(
@@ -835,27 +915,12 @@ export function analyzeWorkoutHistory(
       workingSets: workoutWorkingSets(workout),
       volumeKg: Math.round(workoutVolume(workout)),
     })),
-    calendarWorkouts: sorted.map((workout) => ({
-      id: workout.id,
-      title: workout.title,
-      description: workout.description ?? null,
-      date: localDayKey(new Date(workout.start_time), athleteTimeZone),
-      time: formatTime(workout.start_time, athleteTimeZone),
-      durationMinutes: Math.round(durationMinutes(workout)),
-      workingSets: workoutWorkingSets(workout),
-      volumeKg: Math.round(workoutVolume(workout)),
-      exercises: workout.exercises.map((exercise) => ({
-        title: exercise.title,
-        muscle: muscleLabel(resolvedFor(exercise).primary),
-        notes: exercise.notes ?? null,
-        sets: exercise.sets.map((set) => ({
-          type: set.type ?? 'normal',
-          weightKg: set.weight_kg ?? null,
-          reps: set.reps ?? null,
-          rpe: set.rpe ?? null,
-        })),
-      })),
-    })),
+    calendarWorkouts: buildCalendarWorkouts(
+      sorted,
+      templates,
+      athleteTimeZone,
+      muscleOverrides,
+    ),
     exerciseOptions,
     weeklyReview,
     insights: {
@@ -1384,76 +1449,35 @@ export async function getDashboardData(
 ): Promise<DashboardData> {
   const apiKey = process.env.HEVY_API_KEY;
   try {
+    const { deriveAnalysis } = await import('./derive');
+    await deriveAnalysis(userId, 'version');
+    const { getDashboardSnapshot } = await import('./analysis-repo');
     const { getHevySyncState, listStoredHevyWorkouts, listStoredTemplates } =
       await import('./hevy-repo');
     const { getProfile } = await import('./storage');
-    const { listBodyWeights, summarizeBodyWeight } =
-      await import('./body-weight-repo');
-    const { activeTrainingBlock, listTrainingBlocks } =
-      await import('./training-block-repo');
     const { listMuscleOverrides } = await import('./muscle-repo');
-    const { listExerciseSlots } = await import('./slot-repo');
     const [
-      workouts,
+      snapshot,
+      calendarSource,
       templateRows,
       syncState,
       overrides,
-      slots,
       profile,
-      bodyWeightRows,
-      trainingBlocks,
+      reviewHistory,
     ] = await Promise.all([
-      listStoredHevyWorkouts(userId, { limit: 5_000 }),
+      getDashboardSnapshot(userId),
+      listStoredHevyWorkouts(userId, { limit: 400 }),
       listStoredTemplates(userId),
       getHevySyncState(userId),
       listMuscleOverrides(userId),
-      listExerciseSlots(userId),
       getProfile(userId),
-      listBodyWeights(userId),
-      listTrainingBlocks(userId),
+      (async () => {
+        const { listReviewHistory } = await import('./review');
+        return listReviewHistory(userId);
+      })(),
     ]);
-    if (workouts.length) {
-      const dashboard = analyzeWorkoutHistory(
-        workouts,
-        templateRows.map(deserializeHevyTemplate),
-        'Athlete',
-        new Date(),
-        overrides,
-        slots,
-        profile.daysPerWeek,
-        profile.phase,
-        activeTrainingBlock(trainingBlocks)?.kind ?? null,
-        profile.timezone,
-      );
-      try {
-        const { saveProgressionStates } = await import('./progression-repo');
-        await saveProgressionStates(
-          userId,
-          dashboard.progressionStates,
-          dashboard.analysis.version,
-          dashboard.analysis.generatedAt,
-        );
-      } catch (error) {
-        console.error('Progression state cache could not be refreshed', {
-          message: error instanceof Error ? error.message : 'unknown',
-        });
-      }
-      try {
-        const { savePersonalRecords } = await import('./records-repo');
-        await savePersonalRecords(
-          userId,
-          detectRecords(
-            workouts,
-            templateRows.map(deserializeHevyTemplate),
-            overrides,
-            slots,
-          ),
-        );
-      } catch (error) {
-        console.error('Personal record cache could not be refreshed', {
-          message: error instanceof Error ? error.message : 'unknown',
-        });
-      }
+    if (snapshot) {
+      const templates = templateRows.map(deserializeHevyTemplate);
       const progress = syncState?.lastError
         ? ' · latest sync needs attention'
         : syncState?.fullSyncCompletedAt
@@ -1461,28 +1485,18 @@ export async function getDashboardData(
           : syncState?.fullSyncPageCount
             ? ` · importing page ${syncState.fullSyncNextPage} of ${syncState.fullSyncPageCount}`
             : ' · importing full history';
-      let weeklyReviewV2: WeeklyReview | null = null;
-      let reviewHistory: WeeklyReview[] = [];
-      try {
-        const { ensurePreviousWeekReview, listReviewHistory } =
-          await import('./review');
-        weeklyReviewV2 = await ensurePreviousWeekReview(userId);
-        reviewHistory = await listReviewHistory(userId);
-      } catch (error) {
-        console.error('Weekly review could not be refreshed', {
-          message: error instanceof Error ? error.message : 'unknown',
-        });
-      }
       return {
-        ...dashboard,
-        bodyWeightTrend: summarizeBodyWeight(
-          bodyWeightRows as BodyWeightPoint[],
+        ...snapshot,
+        calendarWorkouts: buildCalendarWorkouts(
+          calendarSource,
+          templates,
+          profile.timezone,
+          overrides,
         ),
-        activeTrainingBlock: activeTrainingBlock(trainingBlocks),
-        weeklyReviewV2,
+        weeklyReviewV2: reviewHistory[0] ?? snapshot.weeklyReviewV2 ?? null,
         reviewHistory,
         sourceLabel: 'Synchronized Hevy history',
-        syncMessage: `Analyzed ${workouts.length} workouts${progress}`,
+        syncMessage: `Analyzed ${snapshot.analysis.coverage.workoutCount} workouts${progress}`,
       };
     }
 

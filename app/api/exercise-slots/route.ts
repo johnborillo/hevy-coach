@@ -10,6 +10,7 @@ import {
 import { SLOT_PATTERNS, suggestSlots, type SlotPattern } from '@/lib/slots';
 import { deserializeHevyTemplate } from '@/lib/hevy-store';
 import { setExerciseSlot } from '@/lib/muscle-repo';
+import { refreshDerivedAnalysis } from '@/lib/derive';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,6 +69,7 @@ export async function POST(request: Request) {
     for (const templateId of templateIds) {
       await setExerciseSlot(userId, templateId, slot.id);
     }
+    await refreshDerivedAnalysis(userId, 'settings');
     return Response.json({ slot }, { status: 201 });
   } catch (error) {
     console.error('Exercise slot could not be created', {
@@ -102,6 +104,7 @@ export async function PATCH(request: Request) {
         body.assigned === false ? null : slotId,
       );
     }
+    await refreshDerivedAnalysis(userId, 'settings');
     return Response.json({ ok: true });
   } catch (error) {
     console.error('Exercise slot could not be updated', {
@@ -120,7 +123,9 @@ export async function DELETE(request: Request) {
     const slotId = typeof body.slotId === 'string' ? body.slotId.trim() : '';
     if (!slotId)
       return Response.json({ error: 'Slot is required.' }, { status: 400 });
-    await deleteExerciseSlot(requestUserId(request.headers), slotId);
+    const userId = requestUserId(request.headers);
+    await deleteExerciseSlot(userId, slotId);
+    await refreshDerivedAnalysis(userId, 'settings');
     return Response.json({ ok: true });
   } catch (error) {
     console.error('Exercise slot could not be deleted', {

@@ -71,6 +71,13 @@
       "when": 1790045000000,
       "tag": "0009_focused_note_search",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1790090528279,
+      "tag": "0010_dashing_firestar",
+      "breakpoints": true
     }
   ]
 }

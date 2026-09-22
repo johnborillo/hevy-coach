@@ -235,6 +235,20 @@ export const progressionStates = sqliteTable(
   (table) => [primaryKey({ columns: [table.userId, table.slotOrTemplateId] })],
 );
 
+export const dashboardSnapshots = sqliteTable('dashboard_snapshots', {
+  userId: text('user_id').primaryKey(),
+  contentJson: text('content_json').notNull(),
+  derivedAt: text('derived_at').notNull(),
+  version: integer('version').notNull(),
+});
+
+export const derivationState = sqliteTable('derivation_state', {
+  userId: text('user_id').primaryKey(),
+  fingerprint: text('fingerprint').notNull(),
+  derivedAt: text('derived_at').notNull(),
+  version: integer('version').notNull(),
+});
+
 export const personalRecords = sqliteTable(
   'personal_records',
   {
