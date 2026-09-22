@@ -16,6 +16,40 @@ export type HevyBodyMeasurement = {
   weight_kg: number | null;
 };
 
+export type HevyRoutineSet = {
+  type: 'warmup' | 'normal' | 'failure' | 'dropset';
+  weight_kg: number | null;
+  reps: number | null;
+  distance_meters: number | null;
+  duration_seconds: number | null;
+  custom_metric: number | null;
+  rep_range?: { start: number; end: number } | null;
+};
+
+export type HevyRoutineExercise = {
+  exercise_template_id: string;
+  superset_id: number | null;
+  rest_seconds: number | null;
+  notes: string;
+  sets: HevyRoutineSet[];
+};
+
+export type HevyRoutinePayload = {
+  routine: {
+    title: string;
+    folder_id?: number | null;
+    notes?: string | null;
+    source?: 'chatgpt';
+    exercises: HevyRoutineExercise[];
+  };
+};
+
+export type HevyRoutineResponse = {
+  routine?: { id?: string; title?: string; [key: string]: unknown };
+  id?: string;
+  [key: string]: unknown;
+};
+
 export type HevyApi = {
   workouts(page: number): Promise<HevyPage<{ workouts: HevyWorkout[] }>>;
   workoutEvents(
@@ -28,6 +62,13 @@ export type HevyApi = {
   bodyMeasurements?(
     page: number,
   ): Promise<HevyPage<{ body_measurements: HevyBodyMeasurement[] }>>;
+  routinesCreate?(payload: HevyRoutinePayload): Promise<HevyRoutineResponse>;
+  routinesUpdate?(
+    routineId: string,
+    payload: Omit<HevyRoutinePayload, 'routine'> & {
+      routine: Omit<HevyRoutinePayload['routine'], 'folder_id'>;
+    },
+  ): Promise<HevyRoutineResponse>;
 };
 
 export function createHevyClient(
@@ -42,6 +83,24 @@ export function createHevyClient(
     });
     if (!response.ok) {
       throw new Error(`Hevy returned ${response.status}`);
+    }
+    return response.json() as Promise<T>;
+  }
+
+  async function write<T>(path: string, method: 'POST' | 'PUT', body: unknown) {
+    const response = await fetcher(`${API_ROOT}${path}`, {
+      method,
+      headers: {
+        'api-key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(15_000),
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(`Hevy returned ${response.status}${detail ? `: ${detail.slice(0, 180)}` : ''}`);
     }
     return response.json() as Promise<T>;
   }
@@ -70,6 +129,16 @@ export function createHevyClient(
     bodyMeasurements(page) {
       return get<HevyPage<{ body_measurements: HevyBodyMeasurement[] }>>(
         `/body_measurements?page=${page}&pageSize=10`,
+      );
+    },
+    routinesCreate(payload) {
+      return write<HevyRoutineResponse>('/routines', 'POST', payload);
+    },
+    routinesUpdate(routineId, payload) {
+      return write<HevyRoutineResponse>(
+        `/routines/${encodeURIComponent(routineId)}`,
+        'PUT',
+        payload,
       );
     },
   };

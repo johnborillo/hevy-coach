@@ -452,11 +452,13 @@ td small { color: #838b7f; font-size: 0.7rem; }
 .program-editor label > span { color: #626b5e; font-size: 0.72rem; font-weight: 700; }
 .program-adjustment textarea,
 .program-editor input,
+.program-editor select,
 .program-editor textarea { width: 100%; min-height: 40px; padding: 9px 10px; border: 1px solid #d3d8ce; border-radius: 9px; outline: 0; background: #fbfcfa; color: var(--foreground); font: inherit; font-size: 0.8rem; }
 .program-adjustment textarea,
 .program-editor textarea { resize: vertical; }
 .program-adjustment textarea:focus,
 .program-editor input:focus,
+.program-editor select:focus,
 .program-editor textarea:focus { border-color: #799d2c; box-shadow: 0 0 0 3px rgb(184 237 74 / 20%); }
 .program-adjustment > div { display: flex; align-items: center; gap: 8px; }
 .program-action-error { margin: 14px 0 0; }
@@ -466,7 +468,7 @@ td small { color: #838b7f; font-size: 0.7rem; }
 .program-principles p { margin: 6px 0 0; font-size: 0.8rem; }
 .training-days { display: grid; gap: 14px; }
 .training-days article { overflow: hidden; border: 1px solid var(--line); border-radius: 14px; }
-.day-heading { display: grid; grid-template-columns: 70px minmax(0, 1fr); align-items: center; gap: 10px; padding: 15px; background: var(--panel-dark); color: white; }
+.day-heading { display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 15px; background: var(--panel-dark); color: white; }
 .day-heading > span { color: var(--signal); font-family: var(--font-geist-mono); font-size: 0.68rem; font-weight: 800; }
 .day-heading h3 { margin: 0; font-size: 1rem; }
 .day-heading p { margin: 2px 0 0; color: #8f978b; font-size: 0.72rem; }
@@ -478,6 +480,20 @@ td small { color: #838b7f; font-size: 0.7rem; }
 .day-exercises b { font-family: var(--font-geist-mono); font-size: 0.74rem; }
 .day-exercises em { color: #6f776b; font-size: 0.72rem; font-style: normal; }
 .draft-note { margin: 18px 0 0; color: #747c70; font-size: 0.72rem; }
+.next-session-card,
+.routine-preview-card { display: grid; gap: 12px; margin: 18px 0; padding: 16px; border: 1px solid #d8dfd0; border-radius: 14px; background: #f3f6ef; }
+.next-session-card h3,
+.routine-preview-card h3 { margin: 0; font-size: 1rem; }
+.next-session-card p:not(.eyebrow),
+.routine-preview-card p:not(.eyebrow) { margin: 4px 0 0; color: #697163; font-size: 0.78rem; }
+.next-session-list { display: grid; gap: 6px; }
+.next-session-list > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-top: 8px; border-top: 1px solid #d8dfd0; }
+.next-session-list strong { font-size: 0.78rem; }
+.next-session-list span { color: #5e685b; font-family: var(--font-geist-mono); font-size: 0.7rem; text-align: right; }
+.next-session-card > small,
+.routine-preview-actions small { color: #788274; font-size: 0.68rem; }
+.routine-preview-card pre { max-height: 280px; margin: 0; overflow: auto; padding: 12px; border-radius: 10px; background: #172017; color: #dbe7d2; font-size: 0.68rem; line-height: 1.45; }
+.routine-preview-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 
 .program-editor { min-width: 0; }
 .program-editor-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
@@ -498,7 +514,7 @@ td small { color: #838b7f; font-size: 0.7rem; }
 .editor-exercise { display: grid; gap: 10px; padding: 14px; border-top: 1px solid var(--line); }
 .editor-exercise-topline { display: grid; grid-template-columns: 27px minmax(0, 1fr) 32px; align-items: center; gap: 8px; }
 .editor-exercise-topline > span { color: var(--signal-deep); font-family: var(--font-geist-mono); font-size: 0.68rem; font-weight: 800; }
-.editor-exercise-grid { display: grid; grid-template-columns: repeat(4, minmax(70px, 1fr)); gap: 8px; }
+.editor-exercise-grid { display: grid; grid-template-columns: repeat(6, minmax(70px, 1fr)); gap: 8px; }
 .editor-exercise-grid label > span { font-size: 0.65rem; }
 .icon-button { display: grid; width: 30px; height: 30px; place-items: center; border: 0; border-radius: 8px; background: #edf0e9; color: #697163; cursor: pointer; }
 .icon-button:hover { background: #e3e8df; }
@@ -617,6 +633,7 @@ td small { color: #8a9286; font-size: 0.68rem; }
   .block-form { grid-template-columns: 1fr; }
   .program-editor-principles,
   .editor-day-heading { grid-template-columns: 1fr; }
+  .day-heading { grid-template-columns: 1fr; }
   .editor-exercise-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .profile-form .span-two { grid-column: auto; }
   .program-document > header { flex-direction: column; }

@@ -69,6 +69,7 @@ import {
 } from '@/components/ui/select';
 import type { DashboardData, MuscleWindow } from '@/lib/hevy';
 import { MUSCLES, muscleLabel, type Muscle } from '@/lib/muscles';
+import { formatEffort, formatRepRange } from '@/lib/program-v2';
 import type {
   AthleteProfile,
   ChatMessage,
@@ -90,6 +91,28 @@ type LedgerSortKey =
   | 'bestE1rm'
   | 'trend';
 type SortDirection = 'asc' | 'desc';
+
+type NextSessionPayload = {
+  session: {
+    dayIndex: number;
+    day: TrainingProgram['days'][number];
+    exercises: Array<{
+      name: string;
+      load: string | null;
+      reps: string;
+      sets: number;
+      effort: string;
+      rationale: string;
+    }>;
+  };
+};
+
+type RoutinePreview = {
+  dayIndex: number;
+  payload: unknown;
+  confirmationToken: string;
+  expiresAt: string;
+};
 
 const NAV_ITEMS = [
   { id: 'today' as const, label: 'Today', icon: Activity },
@@ -476,6 +499,11 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     null,
   );
   const [programAdjustment, setProgramAdjustment] = useState('');
+  const [nextSession, setNextSession] = useState<NextSessionPayload['session'] | null>(null);
+  const [nextSessionBusy, setNextSessionBusy] = useState(false);
+  const [routinePreview, setRoutinePreview] = useState<RoutinePreview | null>(null);
+  const [routineBusy, setRoutineBusy] = useState(false);
+  const [routineError, setRoutineError] = useState('');
   const [programForm, setProgramForm] = useState({
     goal: 'Build muscle and strength',
     durationWeeks: 8,
@@ -825,6 +853,27 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   }, [messages, chatBusy]);
 
   useEffect(() => {
+    if (!activeProgram) return;
+    let cancelled = false;
+    fetch(`/api/next-session?programId=${encodeURIComponent(activeProgram.id)}`)
+      .then((response) =>
+        response.ok ? readJson<NextSessionPayload>(response) : null,
+      )
+      .then((payload) => {
+        if (!cancelled) setNextSession(payload?.session ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setNextSession(null);
+      })
+      .finally(() => {
+        if (!cancelled) setNextSessionBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProgram]);
+
+  useEffect(() => {
     type ModelContext = {
       registerTool: (
         tool: {
@@ -1137,6 +1186,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
 
   function selectProgram(program: TrainingProgram) {
     setActiveProgram(program);
+    setNextSession(null);
     setEditingProgramId(null);
     setAdjustingProgramId(null);
     setProgramAdjustment('');
@@ -1148,6 +1198,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
       current.map((item) => (item.id === program.id ? program : item)),
     );
     setActiveProgram(program);
+    setNextSession(null);
   }
 
   async function saveProgramEdits(
@@ -1230,6 +1281,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
       const remaining = programs.filter((item) => item.id !== program.id);
       setPrograms(remaining);
       setActiveProgram(remaining[0] ?? null);
+      setNextSession(null);
       setEditingProgramId(null);
       setAdjustingProgramId(null);
       setProgramAdjustment('');
@@ -1241,6 +1293,65 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
       );
     } finally {
       setProgramActionBusy(false);
+    }
+  }
+
+  async function previewRoutine(dayIndex: number) {
+    if (!activeProgram || routineBusy) return;
+    setRoutineBusy(true);
+    setRoutineError('');
+    try {
+      const response = await fetch('/api/hevy/routines/preview', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ programId: activeProgram.id, dayIndex }),
+      });
+      const payload = await readJson<{
+        payload?: unknown;
+        confirmationToken?: string;
+        expiresAt?: string;
+        error?: string;
+      }>(response);
+      if (!response.ok || !payload.confirmationToken || !payload.expiresAt) {
+        throw new Error(payload.error || 'This day cannot be prepared for Hevy yet.');
+      }
+      setRoutinePreview({
+        dayIndex,
+        payload: payload.payload,
+        confirmationToken: payload.confirmationToken,
+        expiresAt: payload.expiresAt,
+      });
+    } catch (error) {
+      setRoutineError(error instanceof Error ? error.message : 'Routine preview failed.');
+    } finally {
+      setRoutineBusy(false);
+    }
+  }
+
+  async function confirmRoutineWrite() {
+    if (!activeProgram || !routinePreview || routineBusy) return;
+    setRoutineBusy(true);
+    setRoutineError('');
+    try {
+      const response = await fetch('/api/hevy/routines', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          programId: activeProgram.id,
+          dayIndex: routinePreview.dayIndex,
+          confirmationToken: routinePreview.confirmationToken,
+        }),
+      });
+      const payload = await readJson<{ program?: TrainingProgram; error?: string }>(response);
+      if (!response.ok || !payload.program) {
+        throw new Error(payload.error || 'Hevy could not save this routine.');
+      }
+      replaceProgram(payload.program);
+      setRoutinePreview(null);
+    } catch (error) {
+      setRoutineError(error instanceof Error ? error.message : 'Hevy could not save this routine.');
+    } finally {
+      setRoutineBusy(false);
     }
   }
 
@@ -2553,6 +2664,12 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                   <ProgramEditor
                     key={activeProgram.id}
                     program={activeProgram}
+                    weightUnit={unit}
+                    templateOptions={data.exerciseStats.map((exercise) => ({
+                      id: exercise.exerciseTemplateId,
+                      title: exercise.exercise,
+                      slotId: exercise.slotId,
+                    }))}
                     busy={programActionBusy}
                     onCancel={() => setEditingProgramId(null)}
                     onSave={saveProgramEdits}
@@ -2666,6 +2783,66 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                         {programActionError}
                       </p>
                     )}
+                    {routineError && (
+                      <p className="form-error program-action-error">{routineError}</p>
+                    )}
+                    {nextSession && (
+                      <section className="next-session-card">
+                        <div>
+                          <p className="eyebrow">NEXT SESSION</p>
+                          <h3>{nextSession.day.title}</h3>
+                          <p>{nextSession.day.focus}</p>
+                        </div>
+                        <div className="next-session-list">
+                          {nextSession.exercises.map((exercise) => (
+                            <div key={`${exercise.name}-${exercise.sets}`}>
+                              <strong>{exercise.name}</strong>
+                              <span>
+                                {exercise.sets} × {exercise.reps}
+                                {exercise.load ? ` @ ${exercise.load}` : ''} · {exercise.effort}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        <small>
+                          {nextSessionBusy
+                            ? 'Refreshing progression…'
+                            : 'Loads are resolved from the saved starting load and current progression state.'}
+                        </small>
+                      </section>
+                    )}
+                    {routinePreview && (
+                      <section className="routine-preview-card">
+                        <div>
+                          <p className="eyebrow">HEVY ROUTINE PREVIEW</p>
+                          <h3>Review before writing</h3>
+                          <p>
+                            This is the exact routine payload Hevy will receive. Nothing has been written yet.
+                          </p>
+                        </div>
+                        <pre>{JSON.stringify(routinePreview.payload, null, 2)}</pre>
+                        <div className="routine-preview-actions">
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => void confirmRoutineWrite()}
+                            disabled={routineBusy}
+                          >
+                            {routineBusy ? 'Writing…' : 'Confirm & write to Hevy'}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setRoutinePreview(null)}
+                            disabled={routineBusy}
+                          >
+                            Cancel
+                          </Button>
+                          <small>Preview expires {new Date(routinePreview.expiresAt).toLocaleTimeString()}</small>
+                        </div>
+                      </section>
+                    )}
                     <div className="program-principles">
                       <div>
                         <span>Progression</span>
@@ -2685,6 +2862,15 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                               <h3>{day.title}</h3>
                               <p>{day.focus}</p>
                             </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void previewRoutine(day.day - 1)}
+                              disabled={routineBusy || day.exercises.some((exercise) => !exercise.exerciseTemplateId)}
+                            >
+                              {day.hevyRoutineId ? 'Update in Hevy' : 'Preview Hevy routine'}
+                            </Button>
                           </div>
                           <div className="day-exercises">
                             {day.exercises.map((exercise, index) => (
@@ -2692,13 +2878,19 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                                 <span>{index + 1}</span>
                                 <div>
                                   <strong>{exercise.name}</strong>
-                                  <small>{exercise.note}</small>
+                                  <small>
+                                    {exercise.note}{' '}
+                                    {exercise.startingLoadKg != null
+                                      ? `Starts at ${formatWeight(exercise.startingLoadKg, unit)} · `
+                                      : ''}
+                                    {exercise.progression.rule.replaceAll('_', ' ')}
+                                  </small>
                                 </div>
                                 <b>
-                                  {exercise.sets} × {exercise.reps}
+                                  {exercise.sets} × {formatRepRange(exercise.repRange)}
                                 </b>
                                 <em>
-                                  {exercise.effort} · {exercise.restSeconds}s
+                                  {formatEffort(exercise.effort)} · {exercise.restSeconds}s
                                 </em>
                               </div>
                             ))}

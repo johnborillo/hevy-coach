@@ -12,6 +12,8 @@ A private training-intelligence workspace for Hevy. Hevy remains the workout log
 - Lets athletes confirm variation slots, such as grouping incline dumbbell and barbell presses, so progression survives intentional exercise rotation.
 - Surfaces true personal records only after a five-session baseline, across e1RM, load-at-reps, and reps-at-load signals, with cached record events for long-horizon history.
 - Generates an automatic weekly review with wins, watch items, and next steps.
+- Builds schema-versioned programs with familiar Hevy template links, anchored starting loads, explicit progression rules, next-session prescriptions, and an edit/adjust/delete workflow.
+- Previews routines before writing them to Hevy; an expiring signed confirmation is required, and later pushes update the same routine instead of duplicating it.
 - Saves athlete profile details used to personalize recommendations.
 - Saves coaching chats and generated programs in a private D1 database.
 - Supports kilograms and pounds throughout the interface.
@@ -23,6 +25,7 @@ Copy `.env.example` to `.env.local` and configure:
 
 ```text
 HEVY_API_KEY=
+HEVY_ROUTINE_CONFIRM_SECRET=
 OPENROUTER_API_KEY=
 OPENROUTER_MODEL=z-ai/glm-5.3-flash
 # Optional per-feature overrides. If omitted, OPENROUTER_MODEL is used.
@@ -31,7 +34,7 @@ OPENROUTER_MODEL_PROGRAM=
 OPENROUTER_MODEL_REVIEW=
 ```
 
-Secrets are read only by server routes. Never commit `.env.local` or place keys in browser code.
+Secrets are read only by server routes. `HEVY_ROUTINE_CONFIRM_SECRET` signs short-lived routine preview confirmations; if omitted, the Hevy API key is used as the signing secret. Never commit `.env.local` or place keys in browser code.
 
 ## Local development
 

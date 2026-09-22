@@ -1,4 +1,5 @@
 import { getDatabase } from '@/db';
+import { migrateProgramContent } from './program-v2';
 
 export type WeightUnit = 'kg' | 'lb';
 export type HeightUnit = 'metric' | 'imperial';
@@ -59,22 +60,46 @@ export type ChatMessage = {
   createdAt: string;
 };
 
+export type ProgramEffort = {
+  type: 'rir' | 'rpe';
+  value: number | [number, number];
+};
+
+export type ProgramProgression = {
+  rule:
+    | 'double_progression'
+    | 'linear_load'
+    | 'rep_target_then_load'
+    | 'hold';
+  loadIncrementKg: number;
+  triggerReps?: number;
+};
+
+export type ProgramExercise = {
+  exerciseTemplateId: string | null;
+  slotId: string | null;
+  name: string;
+  sets: number;
+  repRange: [number, number];
+  effort: ProgramEffort;
+  restSeconds: number;
+  startingLoadKg: number | null;
+  progression: ProgramProgression;
+  note: string;
+  rationale: string;
+};
+
 export type TrainingDay = {
   day: number;
   title: string;
   focus: string;
-  exercises: Array<{
-    name: string;
-    sets: number;
-    reps: string;
-    effort: string;
-    restSeconds: number;
-    note: string;
-  }>;
+  exercises: ProgramExercise[];
+  hevyRoutineId?: string | null;
 };
 
 export type TrainingProgram = {
   id: string;
+  schemaVersion: 2;
   title: string;
   goal: string;
   durationWeeks: number;
@@ -448,10 +473,18 @@ function rowToProgram(row: ProgramRow) {
   } catch {
     content = {};
   }
+  const migrated = migrateProgramContent({
+    ...content,
+    title: row.title,
+    goal: row.goal,
+    durationWeeks: row.duration_weeks,
+    daysPerWeek: row.days_per_week,
+    minutesPerSession: row.minutes_per_session,
+  });
   // Database columns are canonical. This prevents an older content_json blob
   // from making two saved programs appear to share the same metadata.
   return {
-    ...content,
+    ...migrated,
     id: row.id,
     title: row.title,
     goal: row.goal,
