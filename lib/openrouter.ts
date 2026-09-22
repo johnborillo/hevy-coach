@@ -318,6 +318,7 @@ function compactContext(profile: AthleteProfile, dashboard: DashboardData) {
       exerciseStats: dashboard.exerciseStats.slice(0, 12).map((exercise) => ({
         exercise: exercise.exercise,
         muscle: exercise.muscle,
+        slot: exercise.slotName,
         sessions: exercise.sessions,
         workingSets: exercise.workingSets,
         loadVolume: displayWeight(exercise.volumeKg),
@@ -326,6 +327,12 @@ function compactContext(profile: AthleteProfile, dashboard: DashboardData) {
         progressionStatus: exercise.progressionStatus,
         recommendation: exercise.progressionRecommendation,
         rationale: exercise.progressionRationale,
+        variationChangeAt:
+          dashboard.progressionStates.find(
+            (state) =>
+              state.slotId === exercise.slotId ||
+              state.exerciseTemplateId === exercise.exerciseTemplateId,
+          )?.variationChangeAt ?? null,
         repsAtModalLoad: exercise.repsAtModalLoad,
         lastSetRpe: exercise.lastSetRpe,
       })),

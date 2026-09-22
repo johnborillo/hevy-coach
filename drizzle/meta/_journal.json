@@ -43,6 +43,13 @@
       "when": 1790025046002,
       "tag": "0005_dizzy_iron_monger",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790040718408,
+      "tag": "0006_dusty_wallop",
+      "breakpoints": true
     }
   ]
 }

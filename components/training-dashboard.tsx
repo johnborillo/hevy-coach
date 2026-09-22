@@ -397,6 +397,10 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     null,
   );
   const [muscleMappingError, setMuscleMappingError] = useState('');
+  const [slotMutationBusy, setSlotMutationBusy] = useState(false);
+  const [slotMutationError, setSlotMutationError] = useState('');
+  const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
+  const [slotNameDraft, setSlotNameDraft] = useState('');
   const [muscleMappingDrafts, setMuscleMappingDrafts] = useState<
     Record<string, Muscle>
   >(() =>
@@ -554,6 +558,112 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
       );
     } finally {
       setMuscleMappingBusy(null);
+    }
+  }
+
+  async function createSuggestedSlot(
+    suggestion: DashboardData['slotSuggestions'][number],
+  ) {
+    setSlotMutationBusy(true);
+    setSlotMutationError('');
+    try {
+      const response = await fetch('/api/exercise-slots', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: suggestion.name,
+          primaryMuscle: suggestion.primaryMuscle,
+          pattern: suggestion.pattern,
+          templateIds: suggestion.templateIds,
+        }),
+      });
+      const result = await readJson<ApiError>(response);
+      if (!response.ok)
+        throw new Error(result.error || 'Slot could not be created.');
+      window.location.reload();
+    } catch (error) {
+      setSlotMutationError(
+        error instanceof Error ? error.message : 'Slot could not be created.',
+      );
+    } finally {
+      setSlotMutationBusy(false);
+    }
+  }
+
+  async function assignExerciseSlot(
+    exerciseTemplateId: string,
+    slotId: string | null,
+  ) {
+    setSlotMutationBusy(true);
+    setSlotMutationError('');
+    try {
+      const response = await fetch('/api/exercise-slots', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          slotId: slotId ?? data.exerciseSlots[0]?.id ?? '',
+          templateId: exerciseTemplateId,
+          assigned: Boolean(slotId),
+        }),
+      });
+      const result = await readJson<ApiError>(response);
+      if (!response.ok)
+        throw new Error(result.error || 'Slot assignment failed.');
+      window.location.reload();
+    } catch (error) {
+      setSlotMutationError(
+        error instanceof Error ? error.message : 'Slot assignment failed.',
+      );
+    } finally {
+      setSlotMutationBusy(false);
+    }
+  }
+
+  async function renameExerciseSlot(slotId: string) {
+    const name = slotNameDraft.trim();
+    if (!name) return;
+    setSlotMutationBusy(true);
+    setSlotMutationError('');
+    try {
+      const response = await fetch('/api/exercise-slots', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ slotId, name }),
+      });
+      const result = await readJson<ApiError>(response);
+      if (!response.ok)
+        throw new Error(result.error || 'Slot name could not be saved.');
+      window.location.reload();
+    } catch (error) {
+      setSlotMutationError(
+        error instanceof Error
+          ? error.message
+          : 'Slot name could not be saved.',
+      );
+    } finally {
+      setSlotMutationBusy(false);
+    }
+  }
+
+  async function removeExerciseSlot(slotId: string) {
+    setSlotMutationBusy(true);
+    setSlotMutationError('');
+    try {
+      const response = await fetch('/api/exercise-slots', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ slotId }),
+      });
+      const result = await readJson<ApiError>(response);
+      if (!response.ok)
+        throw new Error(result.error || 'Slot could not be deleted.');
+      window.location.reload();
+    } catch (error) {
+      setSlotMutationError(
+        error instanceof Error ? error.message : 'Slot could not be deleted.',
+      );
+    } finally {
+      setSlotMutationBusy(false);
     }
   }
 
@@ -1503,6 +1613,105 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                   </div>
                   <Dumbbell />
                 </div>
+                {(data.exerciseSlots.length > 0 ||
+                  data.slotSuggestions.length > 0) && (
+                  <div className="slot-manager">
+                    <div className="slot-manager-heading">
+                      <div>
+                        <p className="eyebrow">VARIATION SLOTS</p>
+                        <strong>Keep rotated movements together.</strong>
+                        <small>
+                          Slots give Rowan one progression history when you
+                          change equipment or exercise variation.
+                        </small>
+                      </div>
+                      <Dumbbell aria-hidden="true" />
+                    </div>
+                    {data.exerciseSlots.map((slot) => (
+                      <div className="slot-row" key={slot.id}>
+                        {editingSlotId === slot.id ? (
+                          <input
+                            value={slotNameDraft}
+                            aria-label={`Rename ${slot.name}`}
+                            onChange={(event) =>
+                              setSlotNameDraft(event.target.value)
+                            }
+                          />
+                        ) : (
+                          <div>
+                            <strong>{slot.name}</strong>
+                            <small>
+                              {slot.templateIds.length || 'No'} movement
+                              {slot.templateIds.length === 1 ? '' : 's'} grouped
+                            </small>
+                          </div>
+                        )}
+                        <div>
+                          {editingSlotId === slot.id ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => void renameExerciseSlot(slot.id)}
+                              disabled={slotMutationBusy}
+                            >
+                              Save
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setEditingSlotId(slot.id);
+                                setSlotNameDraft(slot.name);
+                              }}
+                              disabled={slotMutationBusy}
+                            >
+                              Rename
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void removeExerciseSlot(slot.id)}
+                            disabled={slotMutationBusy}
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                    {data.slotSuggestions.length > 0 && (
+                      <div className="slot-suggestions">
+                        <span>Suggested groupings</span>
+                        {data.slotSuggestions.slice(0, 4).map((suggestion) => (
+                          <div key={suggestion.key}>
+                            <div>
+                              <strong>{suggestion.name}</strong>
+                              <small>
+                                {suggestion.exerciseTitles.join(' · ')}
+                              </small>
+                            </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() =>
+                                void createSuggestedSlot(suggestion)
+                              }
+                              disabled={slotMutationBusy}
+                            >
+                              Group
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {slotMutationError && (
+                      <p className="form-error">{slotMutationError}</p>
+                    )}
+                  </div>
+                )}
                 <div className="table-scroll">
                   <table>
                     <thead>
@@ -1561,6 +1770,38 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                               <td>
                                 <strong>{exercise.exercise}</strong>
                                 <small>{exercise.muscle}</small>
+                                {data.exerciseSlots.length > 0 && (
+                                  <Select
+                                    value={exercise.slotId ?? 'none'}
+                                    onValueChange={(value) => {
+                                      if (!value) return;
+                                      void assignExerciseSlot(
+                                        exercise.exerciseTemplateId,
+                                        value === 'none' ? null : value,
+                                      );
+                                    }}
+                                  >
+                                    <SelectTrigger
+                                      className="ledger-slot-picker"
+                                      aria-label={`Variation slot for ${exercise.exercise}`}
+                                    >
+                                      <SelectValue placeholder="No slot" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="none">
+                                        No slot
+                                      </SelectItem>
+                                      {data.exerciseSlots.map((slot) => (
+                                        <SelectItem
+                                          key={slot.id}
+                                          value={slot.id}
+                                        >
+                                          {slot.name}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                )}
                               </td>
                               <td>{exercise.sessions}</td>
                               <td>{exercise.workingSets}</td>

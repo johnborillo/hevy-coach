@@ -112,6 +112,29 @@ td:first-child { min-width: 190px; padding-left: 0; text-align: left; white-spac
 td strong,
 td small { display: block; }
 td small { color: #838b7f; font-size: 0.7rem; }
+.slot-manager { display: grid; gap: 9px; margin-top: 18px; padding: 14px; border: 1px solid #dce3d6; border-radius: 13px; background: #f5f8f1; }
+.slot-manager-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding-bottom: 8px; }
+.slot-manager-heading strong,
+.slot-manager-heading small { display: block; }
+.slot-manager-heading strong { margin-top: 3px; color: #30372d; font-size: 0.8rem; }
+.slot-manager-heading small { max-width: 560px; margin-top: 3px; color: #7a8275; font-size: 0.7rem; line-height: 1.4; }
+.slot-manager-heading svg { width: 18px; color: var(--signal-deep); }
+.slot-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid #dce3d6; }
+.slot-row > div:first-child { min-width: 0; }
+.slot-row strong,
+.slot-row small { display: block; }
+.slot-row strong { color: #3d4737; font-size: 0.77rem; }
+.slot-row small { margin-top: 2px; color: #7b8477; font-size: 0.68rem; }
+.slot-row > div:last-child { display: flex; flex: none; gap: 5px; }
+.slot-row input { min-height: 34px; width: min(260px, 50%); padding: 6px 9px; border: 1px solid #cbd5c5; border-radius: 8px; background: white; color: var(--foreground); font: inherit; font-size: 0.78rem; }
+.slot-suggestions { display: grid; gap: 6px; padding-top: 10px; border-top: 1px solid #dce3d6; }
+.slot-suggestions > span { color: #68735f; font-family: var(--font-geist-mono); font-size: 0.65rem; font-weight: 750; letter-spacing: 0.05em; text-transform: uppercase; }
+.slot-suggestions > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px dashed #c7d2c0; border-radius: 9px; background: rgb(255 255 255 / 50%); }
+.slot-suggestions strong,
+.slot-suggestions small { display: block; }
+.slot-suggestions strong { color: #3d4737; font-size: 0.75rem; }
+.slot-suggestions small { max-width: 560px; margin-top: 2px; overflow: hidden; color: #7b8477; font-size: 0.67rem; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-slot-picker { min-height: 29px; max-width: 190px; margin-top: 6px; background: #f5f8f1; font-size: 0.68rem; }
 .progression-cell { min-width: 170px; }
 .progression-cell > button { display: grid; grid-template-columns: auto minmax(0, 1fr) 16px; align-items: center; justify-content: end; gap: 7px; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: right; cursor: pointer; }
 .progression-cell > button > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -557,6 +580,9 @@ td small { color: #8a9286; font-size: 0.68rem; }
   .program-document-actions { justify-items: start; }
   .program-action-buttons { justify-content: flex-start; }
   .chat-workspace { display: block; height: auto; min-height: 0; overflow: visible; }
+  .slot-row { align-items: flex-start; flex-direction: column; }
+  .slot-row > div:last-child { align-self: flex-end; }
+  .slot-row input { width: 100%; }
   .chat-sidebar { min-height: auto; max-height: 250px; border-right: 0; border-bottom: 1px solid rgb(255 255 255 / 10%); }
   .conversation-list { max-height: 125px; }
   .coach-identity { display: none; }

@@ -32,6 +32,7 @@ export type MuscleOverride = {
   primaryMuscle: Muscle;
   secondaryMuscles: Muscle[];
   countsAs: number;
+  slotId?: string | null;
 };
 
 export type ResolvedMuscles = {

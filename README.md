@@ -9,6 +9,7 @@ A private training-intelligence workspace for Hevy. Hevy remains the workout log
 - Classifies warm-ups, working sets, dropsets, failure sets, bodyweight/assisted work, and timed or distance efforts before calculating metrics.
 - Audits a complete muscle taxonomy with direct and indirect sets, visible zero-volume muscles, and persistent custom-exercise mappings.
 - Evaluates each exercise with robust rep, load, and RPE trends to label progression, detect stalls, and recommend the next action.
+- Lets athletes confirm variation slots, such as grouping incline dumbbell and barbell presses, so progression survives intentional exercise rotation.
 - Generates an automatic weekly review with wins, watch items, and next steps.
 - Saves athlete profile details used to personalize recommendations.
 - Saves coaching chats and generated programs in a private D1 database.

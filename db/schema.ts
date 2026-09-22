@@ -199,6 +199,20 @@ export const muscleOverrides = sqliteTable(
   ],
 );
 
+export const exerciseSlots = sqliteTable(
+  'exercise_slots',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    name: text('name').notNull(),
+    primaryMuscle: text('primary_muscle').notNull(),
+    pattern: text('pattern'),
+  },
+  (table) => [
+    index('idx_exercise_slots_user_name').on(table.userId, table.name),
+  ],
+);
+
 export const progressionStates = sqliteTable(
   'progression_states',
   {

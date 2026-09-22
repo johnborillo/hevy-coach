@@ -21,12 +21,15 @@ export type ProgressionRecommendation =
 export type ProgressionSession = {
   performedAt: string;
   sets: ClassifiedSet[];
+  exerciseTemplateId?: string;
+  exerciseTitle?: string;
 };
 
 export type ProgressionState = {
   exerciseTemplateId: string;
   slotId: string | null;
   title: string;
+  variationChangeAt: string | null;
   sessionsAnalyzed: number;
   lastPerformedAt: string;
   modalLoadKg: number;
@@ -141,7 +144,10 @@ export function computeProgression(
   exerciseTemplateId: string,
   title: string,
   inputSessions: ProgressionSession[],
-  options: { targetRepRange?: [number, number] | null } = {},
+  options: {
+    targetRepRange?: [number, number] | null;
+    slotId?: string | null;
+  } = {},
 ): ProgressionState {
   const sessions = [...inputSessions]
     .sort(
@@ -281,10 +287,37 @@ export function computeProgression(
       latestRpe !== null && latestRpe >= 9.5 ? 'reduce_load' : 'swap_or_rotate';
   } else if (status === 'regressing') recommendation = 'reduce_volume';
 
+  let variationChangeAt: string | null = null;
+  let latestVariationChangeIndex = -1;
+  for (let index = 1; index < sessions.length; index += 1) {
+    const previous = sessions[index - 1];
+    const current = sessions[index];
+    if (
+      previous.exerciseTemplateId &&
+      current.exerciseTemplateId &&
+      previous.exerciseTemplateId !== current.exerciseTemplateId
+    ) {
+      latestVariationChangeIndex = index;
+      variationChangeAt = current.performedAt;
+    }
+  }
+  const sessionsSinceVariation =
+    latestVariationChangeIndex >= 0
+      ? sessions.length - 1 - latestVariationChangeIndex
+      : null;
+  if (
+    sessionsSinceVariation !== null &&
+    sessionsSinceVariation >= 1 &&
+    sessionsSinceVariation <= 2
+  ) {
+    recommendation = 'none';
+  }
+
   return {
     exerciseTemplateId,
-    slotId: null,
+    slotId: options.slotId ?? null,
     title,
+    variationChangeAt,
     sessionsAnalyzed: sessions.length,
     lastPerformedAt: sessions.at(-1)?.performedAt ?? '',
     modalLoadKg: round(modalLoadKg),
@@ -299,11 +332,16 @@ export function computeProgression(
     sessionsSinceImprovement: sinceImprovement,
     status,
     recommendation,
-    rationale: rationale(status, recommendation, {
-      sessions: sessions.length,
-      sessionsSinceImprovement: sinceImprovement,
-      rpeCoverage,
-      performanceSlopePct,
-    }),
+    rationale:
+      sessionsSinceVariation !== null &&
+      sessionsSinceVariation >= 1 &&
+      sessionsSinceVariation <= 2
+        ? 'New exercise variation; establish a two-session baseline before changing load or volume.'
+        : rationale(status, recommendation, {
+            sessions: sessions.length,
+            sessionsSinceImprovement: sinceImprovement,
+            rpeCoverage,
+            performanceSlopePct,
+          }),
   };
 }
