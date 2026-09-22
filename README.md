@@ -25,6 +25,10 @@ Copy `.env.example` to `.env.local` and configure:
 HEVY_API_KEY=
 OPENROUTER_API_KEY=
 OPENROUTER_MODEL=z-ai/glm-5.3-flash
+# Optional per-feature overrides. If omitted, OPENROUTER_MODEL is used.
+OPENROUTER_MODEL_CHAT=
+OPENROUTER_MODEL_PROGRAM=
+OPENROUTER_MODEL_REVIEW=
 ```
 
 Secrets are read only by server routes. Never commit `.env.local` or place keys in browser code.

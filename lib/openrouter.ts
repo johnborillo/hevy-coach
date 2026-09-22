@@ -1,10 +1,11 @@
-import type { DashboardData } from '@/lib/hevy';
+import type { DashboardData } from './hevy';
 import type {
   AthleteProfile,
   ChatMessage,
   TrainingProgram,
-} from '@/lib/storage';
-import { buildAthleteContext } from '@/lib/context';
+} from './storage';
+import { buildAthleteContext } from './context';
+import { buildCoachContext } from './coach-context';
 
 const DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
 
@@ -416,15 +417,34 @@ function normalizeDate(value: string) {
   return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
 }
 
-function validateCoachEvidence(
+function numberTokens(value: string) {
+  return [...value.matchAll(/\b\d+(?:\.\d+)?\b/g)].map((match) => match[0]);
+}
+
+function validateGroundedNumbers(content: string, evidenceText: string) {
+  const allowed = new Set(numberTokens(evidenceText).map((value) => Number(value)));
+  const historicalYear = /\b(?:on|logged|you did|session on|workout on)\s+(?:[^\d]{0,18})20\d{2}\b/i;
+  for (const token of numberTokens(content)) {
+    const number = Number(token);
+    if (number >= 2000 && number <= 2100 && !historicalYear.test(content)) continue;
+    if (!allowed.has(number)) {
+      throw new EvidenceMismatchError(
+        `The draft included an unsupported number: ${token}`,
+      );
+    }
+  }
+}
+
+export function validateCoachEvidence(
   content: string,
   dashboard: DashboardData,
   profile: AthleteProfile,
+  evidenceText = '',
 ) {
   const wrongWeightUnit =
     profile.weightUnit === 'lb'
-      ? /\b(?:kg|kgs|kilograms?)\b/i
-      : /\b(?:lb|lbs|pounds?)\b/i;
+      ? /\b\d+(?:\.\d+)?\s*(?:kg|kgs|kilograms?)\b/i
+      : /\b\d+(?:\.\d+)?\s*(?:lb|lbs|pounds?)\b/i;
   if (wrongWeightUnit.test(content)) {
     throw new EvidenceMismatchError(
       `The draft did not follow the athlete's ${profile.weightUnit} measurement preference.`,
@@ -442,28 +462,17 @@ function validateCoachEvidence(
   const knownDates = new Set(
     dashboard.calendarWorkouts.map((workout) => workout.date),
   );
-  const knownYears = new Set([...knownDates].map((date) => date.slice(0, 4)));
-  knownYears.add(String(new Date().getUTCFullYear()));
-  const profileYear = profile.targetDate.match(/\b20\d{2}\b/)?.[0];
-  if (profileYear) knownYears.add(profileYear);
-  const dateMatches = [
-    ...content.matchAll(/\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b/g),
-  ].map((match) => match[0]);
-  const unsupportedDates = dateMatches
+  const historicalDateMatches = [
+    ...content.matchAll(
+      /\b(?:on|logged|you did|session on|workout on)\s+(?:[^\d]{0,18})(20\d{2}[-/]\d{1,2}[-/]\d{1,2})\b/gi,
+    ),
+  ].map((match) => match[1]);
+  const unsupportedDates = [...new Set(historicalDateMatches)]
     .map(normalizeDate)
     .filter((date): date is string => date !== null && !knownDates.has(date));
   if (unsupportedDates.length) {
     throw new EvidenceMismatchError(
       `The draft cited dates absent from the synchronized Hevy log: ${[...new Set(unsupportedDates)].join(', ')}`,
-    );
-  }
-
-  const unsupportedYears = [...content.matchAll(/\b20\d{2}\b/g)]
-    .map((match) => match[0])
-    .filter((year) => !knownYears.has(year));
-  if (unsupportedYears.length) {
-    throw new EvidenceMismatchError(
-      `The draft cited years absent from the synchronized Hevy log: ${[...new Set(unsupportedYears)].join(', ')}`,
     );
   }
 
@@ -528,15 +537,16 @@ function validateCoachEvidence(
   for (const lift of ['squat', 'deadlift']) {
     if (knownExerciseText.includes(lift)) continue;
     const unsupportedLift = new RegExp(
-      `\\b(?:your|the)\\s+(?:barbell\\s+)?${lift}\\b`,
+      `\\b(?:your|the)\\s+(?:barbell\\s+)?${lift}\\s+(?:is|was|has|had|numbers?|progress|stalled|regressing|increased|decreased|moved|went)\\b`,
       'i',
-    ).test(content);
+    ).test(content) || new RegExp(`\\byou\\s+(?:squatted|deadlifted)\\b`, 'i').test(content);
     if (unsupportedLift) {
       throw new EvidenceMismatchError(
         `The draft treated ${lift} as a logged lift, but no ${lift} exercise exists in the synchronized Hevy log.`,
       );
     }
   }
+  if (evidenceText) validateGroundedNumbers(content, evidenceText);
 }
 
 export async function askCoach(
@@ -544,9 +554,12 @@ export async function askCoach(
   dashboard: DashboardData,
   history: ChatMessage[],
 ) {
-  const model = process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
+  const model =
+    process.env.OPENROUTER_MODEL_CHAT ||
+    process.env.OPENROUTER_MODEL ||
+    DEFAULT_MODEL;
   const historyMessages: OpenRouterMessage[] = history
-    .slice(-18)
+    .slice(-12)
     .map((message) => ({
       role: message.role,
       content:
@@ -554,16 +567,20 @@ export async function askCoach(
           ? `[Prior coach draft — unverified; do not treat it as evidence]\n${message.content}`
           : message.content,
     }));
-  const baseMessages: OpenRouterMessage[] = [
-    { role: 'system', content: COACH_PERSONA },
-    {
-      role: 'system',
-      content: `Current private training context (the exact workout ledger is under verifiedHevyWorkoutLog):\n${compactContext(profile, dashboard)}`,
-    },
-    ...historyMessages,
-  ];
-
+  let requestedDates: string[] = [];
+  let lastDraft = '';
   for (let pass = 0; pass < 2; pass += 1) {
+    const coachContext = buildCoachContext(profile, dashboard, history, {
+      additionalDates: requestedDates,
+    });
+    const baseMessages: OpenRouterMessage[] = [
+      { role: 'system', content: COACH_PERSONA },
+      {
+        role: 'system',
+        content: `Current private training context (retrieved workouts are the only source for exact workout claims; estimated prompt size ${coachContext.estimatedTokens} tokens):\n${coachContext.text}`,
+      },
+      ...historyMessages,
+    ];
     const messages =
       pass === 0
         ? baseMessages
@@ -581,8 +598,8 @@ export async function askCoach(
         model,
         messages,
         temperature: 0.35,
-        max_tokens: 1400,
-        reasoning: { effort: 'low' },
+        max_tokens: 2000,
+        reasoning: { effort: 'medium' },
         provider: { data_collection: 'deny', allow_fallbacks: true },
       },
       45_000,
@@ -590,20 +607,38 @@ export async function askCoach(
     if (!payload) return null;
     const content = messageContent(payload);
     if (!content) throw new Error('OpenRouter returned an empty response');
+    lastDraft = content;
+    const needs = [
+      ...content.matchAll(/\[NEED:\s*workout\s+(20\d{2}-\d{2}-\d{2})\]/gi),
+    ].map((match) => match[1]);
+    if (needs.length && pass === 0) {
+      requestedDates = [...new Set(needs)];
+      continue;
+    }
     try {
-      validateCoachEvidence(content, dashboard, profile);
-      return { content, model: payload.model ?? model };
+      validateCoachEvidence(content, dashboard, profile, coachContext.text);
+      return {
+        content: content.replace(/\[NEED:\s*workout\s+20\d{2}-\d{2}-\d{2}\]/gi, ''),
+        model: payload.model ?? model,
+      };
     } catch (error) {
-      if (!(error instanceof EvidenceMismatchError) || pass === 1) throw error;
+      if (!(error instanceof EvidenceMismatchError)) throw error;
+      if (pass === 1) {
+        return {
+          content: `${lastDraft}\n\n*Some figures in this answer could not be verified against your synchronized Hevy log.*`,
+          model: payload.model ?? model,
+        };
+      }
       console.warn(
         'Retrying a coach response that failed evidence validation',
         { reason: error.message },
       );
     }
   }
-  throw new EvidenceMismatchError(
-    'The coach response could not be matched to the synchronized Hevy log.',
-  );
+  return {
+    content: `${lastDraft}\n\n*Some figures in this answer could not be verified against your synchronized Hevy log.*`,
+    model,
+  };
 }
 
 export async function generateProgramWithCoach(
@@ -617,7 +652,10 @@ export async function generateProgramWithCoach(
     preferences?: string;
   },
 ) {
-  const model = process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
+  const model =
+    process.env.OPENROUTER_MODEL_PROGRAM ||
+    process.env.OPENROUTER_MODEL ||
+    DEFAULT_MODEL;
   const payload = await requestCompletion(
     {
       model,
@@ -648,7 +686,10 @@ export async function adjustProgramWithCoach(
   program: TrainingProgram,
   adjustment: string,
 ) {
-  const model = process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
+  const model =
+    process.env.OPENROUTER_MODEL_PROGRAM ||
+    process.env.OPENROUTER_MODEL ||
+    DEFAULT_MODEL;
   const payload = await requestCompletion(
     {
       model,
