@@ -405,6 +405,7 @@ function compactContext(profile: AthleteProfile, dashboard: DashboardData) {
         loadVolume: displayWeight(workout.volumeKg),
       })),
       weeklyReview: dashboard.weeklyReview,
+      weeklyReviewV2: dashboard.weeklyReviewV2 ?? null,
     },
   });
 }
