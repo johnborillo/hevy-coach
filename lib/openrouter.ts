@@ -4,8 +4,8 @@ import type {
   ChatMessage,
   TrainingProgram,
 } from './storage';
-import { buildAthleteContext } from './context';
 import { buildCoachContext } from './coach-context';
+import { buildProgramContext, programGenerationPrompt } from './program-generate';
 
 const DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
 
@@ -217,198 +217,6 @@ function messageContent(payload: CompletionPayload) {
       .trim();
   }
   return '';
-}
-
-function roundMeasurement(value: number, digits = 1) {
-  const factor = 10 ** digits;
-  return Math.round(value * factor) / factor;
-}
-
-function preferredWeight(valueKg: number | null, profile: AthleteProfile) {
-  if (valueKg === null) return null;
-  return {
-    value: roundMeasurement(
-      profile.weightUnit === 'lb' ? valueKg * 2.2046226218 : valueKg,
-    ),
-    unit: profile.weightUnit,
-  };
-}
-
-function preferredHeight(heightCm: number | null, profile: AthleteProfile) {
-  if (heightCm === null) return null;
-  if (profile.heightUnit === 'metric') {
-    return { value: roundMeasurement(heightCm), unit: 'cm' };
-  }
-  const totalInches = Math.round(heightCm / 2.54);
-  return { feet: Math.floor(totalInches / 12), inches: totalInches % 12 };
-}
-
-function compactVerifiedWorkoutLog(
-  dashboard: DashboardData,
-  profile: AthleteProfile,
-) {
-  return dashboard.calendarWorkouts.map((workout) => ({
-    id: workout.id,
-    date: workout.date,
-    title: workout.title,
-    exercises: workout.exercises.map((exercise) => ({
-      title: exercise.title,
-      muscle: exercise.muscle,
-      sets: exercise.sets.map((set) => ({
-        type: set.type,
-        load: preferredWeight(set.weightKg, profile),
-        reps: set.reps,
-        rpe: set.rpe,
-      })),
-    })),
-  }));
-}
-
-function compactContext(profile: AthleteProfile, dashboard: DashboardData) {
-  const verifiedHevyWorkoutLog = compactVerifiedWorkoutLog(dashboard, profile);
-  const athleteContext = buildAthleteContext(
-    profile,
-    dashboard.bodyWeightTrend ?? null,
-    dashboard.activeTrainingBlock ?? null,
-  );
-  const bodyWeightTrend = athleteContext.bodyWeightTrend;
-  const { heightCm, weightKg, heightUnit, weightUnit, ...athleteProfile } =
-    profile;
-  const displayWeight = (valueKg: number) => preferredWeight(valueKg, profile);
-  return JSON.stringify({
-    athlete: {
-      ...athleteProfile,
-      phaseWeeks: athleteContext.phaseWeeks,
-      loadIncrements: Object.fromEntries(
-        Object.entries(athleteContext.increments).map(([key, value]) => [
-          key,
-          displayWeight(value),
-        ]),
-      ),
-      phaseContext:
-        profile.phase === 'cut'
-          ? 'A performance dip up to roughly 5–10% can be expected during a cut; distinguish that from a larger loss.'
-          : profile.phase === 'maintain'
-            ? 'Performance dips beyond roughly 5% during maintenance deserve attention.'
-            : 'Strength should generally be stable or improving in this phase; explain small fluctuations without overreacting.',
-      measurementPreferences: {
-        weightUnit,
-        heightFormat:
-          heightUnit === 'imperial' ? 'feet_and_inches' : 'centimetres',
-        instruction: `Present every load, body-weight, estimated-strength, and volume value in ${weightUnit}; present height in ${heightUnit === 'imperial' ? 'feet and inches' : 'centimetres'}.`,
-      },
-      height: preferredHeight(heightCm, profile),
-      bodyWeight: preferredWeight(weightKg, profile),
-    },
-    hevy: {
-      source: dashboard.sourceLabel,
-      evidenceBoundary: `Only verifiedHevyWorkoutLog supports workout-specific claims. Dates are YYYY-MM-DD. All loads, estimated-strength values, body weights, and load-volume values below have already been converted to ${weightUnit}; do not convert them again.`,
-      workoutCoverage: {
-        count: verifiedHevyWorkoutLog.length,
-        oldestDate: verifiedHevyWorkoutLog.at(-1)?.date ?? null,
-        newestDate: verifiedHevyWorkoutLog[0]?.date ?? null,
-      },
-      verifiedHevyWorkoutLog,
-      latestWorkout: dashboard.lastWorkout,
-      stats: {
-        ...dashboard.stats,
-        totalVolume30dKg: undefined,
-        totalLoadVolume30d: displayWeight(dashboard.stats.totalVolume30dKg),
-      },
-      bodyWeightTrend: bodyWeightTrend
-        ? {
-            average7d: preferredWeight(bodyWeightTrend.average7d, profile),
-            slopePerWeek: preferredWeight(
-              bodyWeightTrend.slopeKgPerWeek,
-              profile,
-            ),
-            latest: preferredWeight(bodyWeightTrend.latest, profile),
-          }
-        : null,
-      activeTrainingBlock: dashboard.activeTrainingBlock
-        ? {
-            name: dashboard.activeTrainingBlock.name,
-            kind: dashboard.activeTrainingBlock.kind,
-            startsAt: dashboard.activeTrainingBlock.startsAt,
-            endsAt: dashboard.activeTrainingBlock.endsAt,
-          }
-        : null,
-      muscleDistribution: dashboard.muscles.map((muscle) => ({
-        name: muscle.name,
-        sets: muscle.sets,
-        directSets: muscle.sets,
-        indirectSets: muscle.indirectSets,
-        sessionsHit: muscle.sessionsHit,
-        fourWeekAvgDirect: muscle.fourWeekAvgDirect,
-        band: muscle.bandLabel,
-        previousSets: muscle.previousSets,
-        loadVolume: displayWeight(muscle.volumeKg),
-      })),
-      balance: dashboard.balance,
-      adherence: dashboard.adherenceWeeks,
-      primaryStrengthTrend: {
-        exercise: dashboard.trend.exercise,
-        changePercent: dashboard.trend.change,
-        points: dashboard.trend.points.map((point) => ({
-          date: point.date,
-          label: point.label,
-          estimated1Rm: displayWeight(point.value),
-        })),
-      },
-      workload: dashboard.workloadWeeks.map((week) => ({
-        label: week.label,
-        sets: week.sets,
-        sessions: week.sessions,
-        loadVolume: displayWeight(week.volumeKg),
-      })),
-      exerciseStats: dashboard.exerciseStats.slice(0, 12).map((exercise) => ({
-        exercise: exercise.exercise,
-        muscle: exercise.muscle,
-        slot: exercise.slotName,
-        sessions: exercise.sessions,
-        workingSets: exercise.workingSets,
-        loadVolume: displayWeight(exercise.volumeKg),
-        bestEstimated1Rm: displayWeight(exercise.bestE1rmKg),
-        changePercent: exercise.change,
-        progressionStatus: exercise.progressionStatus,
-        recommendation: exercise.progressionRecommendation,
-        rationale: exercise.progressionRationale,
-        variationChangeAt:
-          dashboard.progressionStates.find(
-            (state) =>
-              state.slotId === exercise.slotId ||
-              state.exerciseTemplateId === exercise.exerciseTemplateId,
-          )?.variationChangeAt ?? null,
-        repsAtModalLoad: exercise.repsAtModalLoad,
-        lastSetRpe: exercise.lastSetRpe,
-      })),
-      recentRecords: dashboard.records.map((record) => ({
-        exercise: record.exercise,
-        date: record.date,
-        kind: record.kind,
-        value:
-          record.kind === 'reps_at_load'
-            ? record.reps
-            : displayWeight(record.valueKg),
-        load: displayWeight(record.weightKg),
-        reps: record.reps,
-        previousValue:
-          record.previousValue == null
-            ? null
-            : record.kind === 'reps_at_load'
-              ? record.previousValue
-              : displayWeight(record.previousValue),
-        previousDate: record.previousDate,
-      })),
-      recentWorkouts: dashboard.recentWorkouts.map((workout) => ({
-        ...workout,
-        volumeKg: undefined,
-        loadVolume: displayWeight(workout.volumeKg),
-      })),
-      weeklyReview: dashboard.weeklyReview,
-      weeklyReviewV2: dashboard.weeklyReviewV2 ?? null,
-    },
-  });
 }
 
 function normalizeDate(value: string) {
@@ -651,6 +459,7 @@ export async function generateProgramWithCoach(
     minutesPerSession: number;
     preferences?: string;
   },
+  currentProgram: TrainingProgram | null = null,
 ) {
   const model =
     process.env.OPENROUTER_MODEL_PROGRAM ||
@@ -668,7 +477,7 @@ export async function generateProgramWithCoach(
         { role: 'system', content: COACH_PERSONA },
         {
           role: 'user',
-          content: `Create a ${request.durationWeeks}-week program for ${request.goal}, ${request.daysPerWeek} days per week, ${request.minutesPerSession} minutes per session. Block-specific preferences: ${request.preferences || 'none provided'}. Use the supplied athlete constraints and prioritize familiar Hevy exercises when sensible. Return JSON only with: title, overview, progression, deload, and days. Each day needs day, title, focus, and exercises. Each exercise needs name, sets (number), reps (string), effort, restSeconds (number), and note.\n\n${compactContext(profile, dashboard)}`,
+          content: programGenerationPrompt(request, buildProgramContext(profile, dashboard, currentProgram)),
         },
       ],
     },
@@ -705,7 +514,7 @@ export async function adjustProgramWithCoach(
         },
         {
           role: 'user',
-          content: `Adjust this saved training program according to the athlete's request. Keep useful exercises and progression logic where they still fit. Never invent an injury diagnosis.\n\nAthlete request: ${adjustment}\n\nCurrent program:\n${JSON.stringify(program)}\n\nPrivate training context:\n${compactContext(profile, dashboard)}\n\nSchema reminder: title, goal, durationWeeks, daysPerWeek, minutesPerSession, overview, progression, deload, and days. Each day needs day, title, focus, exercises. Each exercise needs name, sets (number), reps (string), effort, restSeconds (number), and note.`,
+          content: `Adjust this saved training program according to the athlete's request. Keep useful exercises and progression logic where they still fit. Never invent an injury diagnosis. Return schemaVersion 2 JSON with the complete replacement program.\n\nAthlete request: ${adjustment}\n\nCurrent program:\n${JSON.stringify(program)}\n\nPrivate training context:\n${buildProgramContext(profile, dashboard, program)}\n\nUse the schema from the current program and keep startingLoadKg in kilograms.`,
         },
       ],
     },

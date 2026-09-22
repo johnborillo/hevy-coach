@@ -1,5 +1,6 @@
 import type { DashboardData } from '@/lib/hevy';
 import type { AthleteProfile, TrainingProgram } from '@/lib/storage';
+import { normalizeProgramV2 } from '@/lib/program-v2';
 
 export type ProgramRequest = {
   goal: string;
@@ -69,7 +70,7 @@ export function buildFallbackProgram(
       };
     }),
   }));
-  return {
+  const legacy = {
     title: `${input.durationWeeks}-Week ${input.goal} Block`,
     goal: input.goal,
     durationWeeks: input.durationWeeks,
@@ -80,11 +81,14 @@ export function buildFallbackProgram(
     deload: `In week ${Math.max(4, input.durationWeeks)}, reduce working sets by roughly one third if performance, motivation, or recovery has deteriorated.`,
     days,
   };
+  const normalized = normalizeProgramV2(legacy, input, profile, dashboard);
+  if (normalized) return normalized;
+  throw new Error('The deterministic continuation program could not be normalized.');
 }
 
 export function programPrompt(input: ProgramRequest, profile: AthleteProfile, dashboard: DashboardData) {
-  return `Create a complete training program as strict JSON only. Use this schema:
-{"title":"string","goal":"string","durationWeeks":number,"daysPerWeek":number,"minutesPerSession":number,"overview":"string","progression":"string","deload":"string","days":[{"day":number,"title":"string","focus":"string","exercises":[{"name":"string","sets":number,"reps":"string","effort":"string","restSeconds":number,"note":"string"}]}]}
+  return `Create a complete training program as strict JSON only. Use schemaVersion 2 and this schema:
+{"schemaVersion":2,"title":"string","goal":"string","durationWeeks":number,"daysPerWeek":number,"minutesPerSession":number,"overview":"string","progression":"string","deload":"string","days":[{"day":number,"title":"string","focus":"string","exercises":[{"exerciseTemplateId":"string|null","slotId":"string|null","name":"string","sets":number,"repRange":[number,number],"effort":{"type":"rir|rpe","value":"number|[number,number]"},"restSeconds":number,"startingLoadKg":"number|null","progression":{"rule":"double_progression|linear_load|rep_target_then_load|hold","loadIncrementKg":number,"triggerReps":"number|null"},"note":"string","rationale":"string"}]}]}
 
 Request: ${JSON.stringify(input)}
 Athlete profile: ${JSON.stringify(profile)}
@@ -93,4 +97,3 @@ Weekly review: ${JSON.stringify(dashboard.weeklyReview)}
 
 Respect the requested days, duration, goal, available equipment, limitations, and session time. Prefer familiar logged movements where appropriate. Return JSON only.`;
 }
-
