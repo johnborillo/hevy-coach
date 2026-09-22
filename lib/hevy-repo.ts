@@ -8,6 +8,9 @@ import {
   type StoredHevyTemplate,
   type StoredHevyWorkout,
 } from './hevy-store';
+import { noteRowsForWorkout } from './notes-repo';
+
+export { searchStoredNotes } from './notes-repo';
 
 export { upsertHevyBodyWeights } from './body-weight-repo';
 
@@ -325,6 +328,30 @@ export async function replaceStoredWorkout(
     ),
   ];
   await database.batch(statements);
+  const noteRows = noteRowsForWorkout(userId, workout);
+  await database.batch([
+    database
+      .prepare('DELETE FROM hevy_notes_fts WHERE user_id = ? AND workout_id = ?')
+      .bind(userId, workout.id),
+    ...noteRows.map((note) =>
+      database
+        .prepare(
+          `INSERT INTO hevy_notes_fts (
+            user_id, workout_id, exercise_template_id, exercise_title,
+            workout_date, workout_title, content
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          note.userId,
+          note.workoutId,
+          note.exerciseTemplateId,
+          note.exerciseTitle,
+          note.workoutDate,
+          note.workoutTitle,
+          note.content,
+        ),
+    ),
+  ]);
   return bundle;
 }
 
@@ -342,6 +369,9 @@ export async function markStoredWorkoutDeleted(
       .bind(syncedAt, userId, workoutId),
     database
       .prepare('DELETE FROM hevy_sets WHERE user_id = ? AND workout_id = ?')
+      .bind(userId, workoutId),
+    database
+      .prepare('DELETE FROM hevy_notes_fts WHERE user_id = ? AND workout_id = ?')
       .bind(userId, workoutId),
   ]);
 }

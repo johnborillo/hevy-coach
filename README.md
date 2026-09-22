@@ -12,6 +12,7 @@ A private training-intelligence workspace for Hevy. Hevy remains the workout log
 - Lets athletes confirm variation slots, such as grouping incline dumbbell and barbell presses, so progression survives intentional exercise rotation.
 - Surfaces true personal records only after a five-session baseline, across e1RM, load-at-reps, and reps-at-load signals, with cached record events for long-horizon history.
 - Generates an automatic weekly review with wins, watch items, and next steps.
+- Indexes workout descriptions and exercise notes in a private SQLite FTS5 store, flags pain/recovery/time/intent notes in weekly reviews, and retrieves matching notes for grounded coach answers.
 - Builds schema-versioned programs with familiar Hevy template links, anchored starting loads, explicit progression rules, next-session prescriptions, and an edit/adjust/delete workflow.
 - Previews routines before writing them to Hevy; an expiring signed confirmation is required, and later pushes update the same routine instead of duplicating it.
 - Saves athlete profile details used to personalize recommendations.

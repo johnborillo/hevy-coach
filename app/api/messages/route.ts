@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     ]);
     let answer: { content: string; model: string };
     try {
-      answer = (await askCoach(profile, dashboard, history)) ?? {
+      answer = (await askCoach(userId, profile, dashboard, history)) ?? {
         content: fallbackAnswer(content, dashboard),
         model: 'evidence-engine',
       };
