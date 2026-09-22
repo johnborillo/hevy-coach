@@ -38,6 +38,7 @@ import {
 } from './audit';
 import type { BodyWeightPoint } from './body-weight-repo';
 import type { TrainingBlock } from './training-block-repo';
+import type { WeeklyReview } from './findings';
 
 export type TrendPoint = { date: string; value: number; label: string };
 
@@ -178,6 +179,8 @@ export type DashboardData = {
     watch: string[];
     nextSteps: string[];
   };
+  weeklyReviewV2?: WeeklyReview | null;
+  reviewHistory?: WeeklyReview[];
   insights: { plateau: string; return: string; progress: string };
 };
 
@@ -1394,12 +1397,26 @@ export async function getDashboardData(
           : syncState?.fullSyncPageCount
             ? ` · importing page ${syncState.fullSyncNextPage} of ${syncState.fullSyncPageCount}`
             : ' · importing full history';
+      let weeklyReviewV2: WeeklyReview | null = null;
+      let reviewHistory: WeeklyReview[] = [];
+      try {
+        const { ensurePreviousWeekReview, listReviewHistory } =
+          await import('./review');
+        weeklyReviewV2 = await ensurePreviousWeekReview(userId);
+        reviewHistory = await listReviewHistory(userId);
+      } catch (error) {
+        console.error('Weekly review could not be refreshed', {
+          message: error instanceof Error ? error.message : 'unknown',
+        });
+      }
       return {
         ...dashboard,
         bodyWeightTrend: summarizeBodyWeight(
           bodyWeightRows as BodyWeightPoint[],
         ),
         activeTrainingBlock: activeTrainingBlock(trainingBlocks),
+        weeklyReviewV2,
+        reviewHistory,
         sourceLabel: 'Synchronized Hevy history',
         syncMessage: `Analyzed ${workouts.length} workouts${progress}`,
       };

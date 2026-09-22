@@ -180,6 +180,13 @@ function formatShortDate(value: string) {
     : value;
 }
 
+function reviewRange(weekStart: string) {
+  const start = new Date(weekStart);
+  if (!Number.isFinite(start.getTime())) return weekStart;
+  const end = new Date(start.getTime() + 6 * 86_400_000);
+  return `${formatShortDate(start.toISOString())}–${formatShortDate(end.toISOString())}`;
+}
+
 function volume(value: number, unit: WeightUnit) {
   const converted = toDisplayWeight(value, unit);
   return converted >= 1000
@@ -1342,38 +1349,106 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 <div className="panel-heading compact">
                   <div>
                     <p className="eyebrow">
-                      WEEKLY REVIEW / {data.weeklyReview.label}
+                      WEEKLY REVIEW /{' '}
+                      {data.weeklyReviewV2
+                        ? reviewRange(data.weeklyReviewV2.weekStart)
+                        : data.weeklyReview.label}
                     </p>
                     <h2>The coach’s read</h2>
                   </div>
                   <Medal />
                 </div>
                 <div className="review-sections">
-                  <div>
-                    <span className="review-label good">
-                      <Check /> Wins
-                    </span>
-                    {data.weeklyReview.wins.map((item) => (
-                      <p key={item}>{item}</p>
-                    ))}
-                  </div>
-                  <div>
-                    <span className="review-label warn">
-                      <CircleAlert /> Watch
-                    </span>
-                    {data.weeklyReview.watch.map((item) => (
-                      <p key={item}>{item}</p>
-                    ))}
-                  </div>
-                  <div>
-                    <span className="review-label">
-                      <Target /> Next week
-                    </span>
-                    {data.weeklyReview.nextSteps.map((item) => (
-                      <p key={item}>{item}</p>
-                    ))}
-                  </div>
+                  {data.weeklyReviewV2 ? (
+                    <>
+                      <div>
+                        <span className="review-label good">
+                          <Check /> Wins
+                        </span>
+                        {data.weeklyReviewV2.wins.length ? (
+                          data.weeklyReviewV2.wins.map((item) => (
+                            <p key={item.id}>{item.headline}</p>
+                          ))
+                        ) : (
+                          <p>No new wins were verified in this window.</p>
+                        )}
+                      </div>
+                      <div>
+                        <span className="review-label warn">
+                          <CircleAlert /> Watch
+                        </span>
+                        {data.weeklyReviewV2.watch.length ? (
+                          data.weeklyReviewV2.watch.map((item) => (
+                            <p key={item.id}>{item.headline}</p>
+                          ))
+                        ) : (
+                          <p>No watch items were raised by the evidence.</p>
+                        )}
+                      </div>
+                      <div>
+                        <span className="review-label">
+                          <Target /> Next week
+                        </span>
+                        {data.weeklyReviewV2.act.length ? (
+                          data.weeklyReviewV2.act.map((item) => (
+                            <p key={item.id}>
+                              {item.recommendation || item.headline}
+                            </p>
+                          ))
+                        ) : (
+                          <p>
+                            Keep the current exposures consistent and reassess
+                            after another week.
+                          </p>
+                        )}
+                        {data.weeklyReviewV2.carriedOver.length > 0 && (
+                          <small className="review-carried-over">
+                            {data.weeklyReviewV2.carriedOver.length} watch item
+                            {data.weeklyReviewV2.carriedOver.length === 1
+                              ? ''
+                              : 's'}{' '}
+                            carried over
+                          </small>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <span className="review-label good">
+                          <Check /> Wins
+                        </span>
+                        {data.weeklyReview.wins.map((item) => (
+                          <p key={item}>{item}</p>
+                        ))}
+                      </div>
+                      <div>
+                        <span className="review-label warn">
+                          <CircleAlert /> Watch
+                        </span>
+                        {data.weeklyReview.watch.map((item) => (
+                          <p key={item}>{item}</p>
+                        ))}
+                      </div>
+                      <div>
+                        <span className="review-label">
+                          <Target /> Next week
+                        </span>
+                        {data.weeklyReview.nextSteps.map((item) => (
+                          <p key={item}>{item}</p>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
+                {data.weeklyReviewV2 && (
+                  <div className="review-summary-line">
+                    {data.weeklyReviewV2.summary.sessions} /{' '}
+                    {data.weeklyReviewV2.summary.planned} planned sessions ·{' '}
+                    {data.weeklyReviewV2.summary.directSets} direct working sets
+                    · {data.weeklyReviewV2.summary.prs} verified PR signals
+                  </div>
+                )}
               </article>
             </section>
 
