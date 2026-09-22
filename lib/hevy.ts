@@ -61,6 +61,7 @@ export type WorkoutSetLog = {
 export type CalendarWorkout = {
   id: string;
   title: string;
+  description?: string | null;
   date: string;
   time: string;
   durationMinutes: number;
@@ -69,6 +70,7 @@ export type CalendarWorkout = {
   exercises: Array<{
     title: string;
     muscle: string;
+    notes?: string | null;
     sets: WorkoutSetLog[];
   }>;
 };
@@ -780,6 +782,7 @@ export function analyzeWorkoutHistory(
     calendarWorkouts: sorted.map((workout) => ({
       id: workout.id,
       title: workout.title,
+      description: workout.description ?? null,
       date: workout.start_time.slice(0, 10),
       time: formatTime(workout.start_time),
       durationMinutes: Math.round(durationMinutes(workout)),
@@ -788,6 +791,7 @@ export function analyzeWorkoutHistory(
       exercises: workout.exercises.map((exercise) => ({
         title: exercise.title,
         muscle: muscleLabel(resolvedFor(exercise).primary),
+        notes: exercise.notes ?? null,
         sets: exercise.sets.map((set) => ({
           type: set.type ?? 'normal',
           weightKg: set.weight_kg ?? null,

@@ -82,6 +82,9 @@ export type FindingContext = {
   activeBlockKind?: string | null;
   citations: string[];
   unmappedExercises?: Array<{ id: string; title: string }>;
+  noteFlags?: Finding[];
+  painSuppressedExerciseTemplateIds?: string[];
+  painSuppressedSlotIds?: string[];
 };
 
 function stableId(kind: FindingKind, subjectKey: string, weekStart: string) {
@@ -131,11 +134,19 @@ export function impactScore(item: Finding) {
 export function produceFindings(context: FindingContext) {
   const findings: Finding[] = [];
   const phase = phaseContext(context.phase);
+  const painSuppressed = new Set(
+    context.painSuppressedExerciseTemplateIds ?? [],
+  );
+  const painSuppressedSlots = new Set(context.painSuppressedSlotIds ?? []);
+  findings.push(...(context.noteFlags ?? []));
   for (const state of context.progressionStates) {
     const subjectType = state.slotId ? 'slot' : 'exercise';
     const subjectKey = state.slotId ?? state.exerciseTemplateId;
     const citations = context.citations.slice(0, 3);
-    if (state.status === 'stalled') {
+    const painSuppressedForState =
+      painSuppressed.has(state.exerciseTemplateId) ||
+      (state.slotId !== null && painSuppressedSlots.has(state.slotId));
+    if (state.status === 'stalled' && !painSuppressedForState) {
       findings.push(
         finding(context, {
           kind: 'EXERCISE_STALLED',
@@ -154,7 +165,7 @@ export function produceFindings(context: FindingContext) {
         }),
       );
     }
-    if (state.status === 'regressing') {
+    if (state.status === 'regressing' && !painSuppressedForState) {
       findings.push(
         finding(context, {
           kind: 'EXERCISE_REGRESSING',

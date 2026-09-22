@@ -5,6 +5,7 @@ import { composeWeeklyReview, type FindingContext } from './findings';
 import { listTrainingBlocks, type TrainingBlock } from './training-block-repo';
 import { detectRecords, type PersonalRecord } from './records';
 import { getProfile } from './storage';
+import { flagNotes, painSuppressedExerciseTemplateIds } from './notes';
 import {
   getWeeklyReview,
   listWeeklyReviews,
@@ -66,6 +67,9 @@ function reviewContext(
   activeBlock: TrainingBlock | null,
   sessionsInPriorWeek: number,
   volumeChangePercent: number,
+  noteFlags: FindingContext['noteFlags'],
+  painSuppressedExerciseTemplateIds: string[],
+  painSuppressedSlotIds: string[],
 ): FindingContext {
   const start = weekStart.getTime();
   const end = start + WEEK;
@@ -101,6 +105,9 @@ function reviewContext(
     activeBlockKind: activeBlock?.kind ?? null,
     citations,
     unmappedExercises: dashboard.unmappedExercises,
+    noteFlags,
+    painSuppressedExerciseTemplateIds,
+    painSuppressedSlotIds,
   };
 }
 
@@ -144,6 +151,13 @@ export async function generateWeeklyReview(
   const citations = workouts
     .filter((workout) => inWindow(workout.start_time, startMs, endMs))
     .map((workout) => workout.id);
+  const noteFlags = workouts
+    .filter((workout) => inWindow(workout.start_time, startMs, endMs))
+    .flatMap((workout) => flagNotes(workout, start.toISOString()));
+  const painSuppressed = painSuppressedExerciseTemplateIds(workouts);
+  const painSuppressedSlots = dashboard.exerciseSlots
+    .filter((slot) => slot.templateIds.some((id) => painSuppressed.includes(id)))
+    .map((slot) => slot.id);
   const priorTotals = weekTotals(dashboard, startMs - WEEK, startMs);
   const currentTotals = weekTotals(dashboard, startMs, endMs);
   const volumeChangePercent = priorTotals.volumeKg
@@ -167,6 +181,9 @@ export async function generateWeeklyReview(
       activeBlock,
       priorTotals.sessions,
       volumeChangePercent,
+      noteFlags,
+      painSuppressed,
+      painSuppressedSlots,
     ),
     previous,
   );

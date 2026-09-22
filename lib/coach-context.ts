@@ -1,9 +1,11 @@
 import type { DashboardData } from './hevy';
 import type { AthleteProfile, ChatMessage } from './storage';
 import { buildAthleteContext } from './context';
+import type { NoteSearchResult } from './notes-repo';
 
 export type CoachContextOptions = {
   additionalDates?: string[];
+  noteResults?: NoteSearchResult[];
 };
 
 export type CoachContext = {
@@ -20,11 +22,13 @@ function compactWorkout(
     id: workout.id,
     date: workout.date,
     title: workout.title,
+    description: workout.description ?? null,
     time: workout.time,
     durationMinutes: workout.durationMinutes,
     exercises: workout.exercises.map((exercise) => ({
       title: exercise.title,
       muscle: exercise.muscle,
+      notes: exercise.notes ?? null,
       sets: exercise.sets.map((set) => ({
         type: set.type,
         load:
@@ -105,6 +109,9 @@ export function buildCoachContext(
   const selected = [
     ...dashboard.calendarWorkouts.slice(0, 3),
     ...referenced,
+    ...(options.noteResults ?? []).flatMap((note) =>
+      dashboard.calendarWorkouts.filter((workout) => workout.id === note.workoutId),
+    ),
   ].filter(
     (workout, index, all) => all.findIndex((item) => item.id === workout.id) === index,
   );
@@ -212,18 +219,31 @@ export function buildCoachContext(
     })),
     adherence: dashboard.adherenceWeeks,
     verifiedHevyWorkoutLog: selected.map((workout) => compactWorkout(workout, profile)),
+    retrievedNotes: (options.noteResults ?? []).map((note) => ({
+      workoutId: note.workoutId,
+      workoutDate: note.workoutDate,
+      workoutTitle: note.workoutTitle,
+      exerciseTemplateId: note.exerciseTemplateId,
+      exerciseTitle: note.exerciseTitle,
+      note: note.text,
+    })),
     workoutCoverage: {
       totalVerified: dashboard.calendarWorkouts.length,
       oldestDate: dashboard.calendarWorkouts.at(-1)?.date ?? null,
       newestDate: dashboard.calendarWorkouts[0]?.date ?? null,
     },
     retrievalNote:
-      'Only the verifiedHevyWorkoutLog above may support exact workout claims. If another exact workout is needed, request it with [NEED: workout YYYY-MM-DD].',
+      'Only the verifiedHevyWorkoutLog and retrievedNotes above may support exact workout or note claims. Quote notes verbatim when useful. If another exact workout is needed, request it with [NEED: workout YYYY-MM-DD].',
   };
   const text = JSON.stringify(contextObject);
   return {
     text,
-    workoutIds: selected.map((workout) => workout.id),
+    workoutIds: [
+      ...new Set([
+        ...selected.map((workout) => workout.id),
+        ...(options.noteResults ?? []).map((note) => note.workoutId),
+      ]),
+    ],
     estimatedTokens: Math.ceil(text.length / 4),
   };
 }

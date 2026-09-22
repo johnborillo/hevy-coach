@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { CalendarDays, Clock3, Dumbbell } from 'lucide-react';
+import { CalendarDays, Clock3, Dumbbell, StickyNote } from 'lucide-react';
 import { DayPicker } from 'react-day-picker';
 
 import type { CalendarWorkout } from '@/lib/hevy';
@@ -129,7 +129,30 @@ export function WorkoutCalendar({
                 <header>
                   <div>
                     <span>{workout.time}</span>
-                    <h3>{workout.title}</h3>
+                    <h3>
+                      {workout.title}
+                      {(workout.description ||
+                        workout.exercises.some((exercise) => exercise.notes)) && (
+                        <span
+                          className="workout-note-indicator"
+                          title={[
+                            workout.description,
+                            ...workout.exercises
+                              .map((exercise) =>
+                                exercise.notes
+                                  ? `${exercise.title}: ${exercise.notes}`
+                                  : null,
+                              )
+                              .filter(Boolean),
+                          ]
+                            .filter(Boolean)
+                            .join('\n')}
+                          aria-label="Workout notes available"
+                        >
+                          <StickyNote />
+                        </span>
+                      )}
+                    </h3>
                   </div>
                   <div className="workout-summary-strip">
                     <span>

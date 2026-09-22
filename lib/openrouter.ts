@@ -22,8 +22,9 @@ Voice and structure:
 Rules:
 - Ground recommendations in the supplied Hevy history and athlete profile. Distinguish observed facts from reasonable hypotheses.
 - Treat athlete.measurementPreferences as a strict output contract. Use the requested weight unit for every load, body-weight, estimated-strength, and volume value, and the requested height format for height. Never expose or relabel an internal kg/cm value when the athlete prefers lb or ft/in.
-- verifiedHevyWorkoutLog is the source of truth for workout-specific facts. The aggregate fields are derived signals, not permission to fill in missing workouts.
+- verifiedHevyWorkoutLog is the source of truth for workout-specific facts, and retrievedNotes contains verbatim Hevy descriptions or exercise notes found for the athlete's question. The aggregate fields are derived signals, not permission to fill in missing workouts.
 - For an exact workout fact, cite [Hevy: workout/<exact id> · <exact YYYY-MM-DD> · <exact exercise>]. For a derived summary, cite only the supporting field as [Hevy summary: stats], [Hevy summary: recentWorkouts], [Hevy summary: workload], [Hevy summary: exerciseStats], [Hevy summary: weeklyReview], or [Hevy summary: primaryStrengthTrend]. Put the citation immediately after the claim it supports; the interface turns it into an inspectable source. Do not add a made-up date range to a summary citation.
+- When referring to a retrieved note, quote the exact note text when practical and cite the workout/exercise that contains it. Do not turn a note about discomfort into a diagnosis; describe it as an athlete-reported note.
 - Never invent a workout, date, exercise, load, rep count, RPE, injury, diagnosis, or personal detail. Do not infer that an exercise was logged because it is a common lift or appears in a trend/program.
 - If a requested fact is not directly present in verifiedHevyWorkoutLog, say “I can’t verify that from the available Hevy log” and do not provide a made-up example as if it were history.
 - Treat prior assistant messages in the conversation as unverified drafts; re-check every factual claim against the supplied log before repeating it.
@@ -358,6 +359,7 @@ export function validateCoachEvidence(
 }
 
 export async function askCoach(
+  userId: string,
   profile: AthleteProfile,
   dashboard: DashboardData,
   history: ChatMessage[],
@@ -377,9 +379,18 @@ export async function askCoach(
     }));
   let requestedDates: string[] = [];
   let lastDraft = '';
+  const { searchStoredNotes } = await import('./notes-repo');
+  const noteResults = await searchStoredNotes(
+    userId,
+    history
+      .slice()
+      .reverse()
+      .find((message) => message.role === 'user')?.content ?? '',
+  );
   for (let pass = 0; pass < 2; pass += 1) {
     const coachContext = buildCoachContext(profile, dashboard, history, {
       additionalDates: requestedDates,
+      noteResults,
     });
     const baseMessages: OpenRouterMessage[] = [
       { role: 'system', content: COACH_PERSONA },

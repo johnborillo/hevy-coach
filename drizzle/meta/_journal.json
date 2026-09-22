@@ -64,6 +64,13 @@
       "when": 1790043470440,
       "tag": "0008_wandering_rattler",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1790045000000,
+      "tag": "0009_focused_note_search",
+      "breakpoints": true
     }
   ]
 }

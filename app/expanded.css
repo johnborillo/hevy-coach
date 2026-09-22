@@ -373,6 +373,8 @@ td small { color: #838b7f; font-size: 0.7rem; }
 .logged-workout > header { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; padding: 18px; background: var(--panel-dark); color: white; }
 .logged-workout > header span { color: #929a8f; font-family: var(--font-geist-mono); font-size: 0.68rem; }
 .logged-workout > header h3 { margin: 3px 0 0; font-size: 1.06rem; }
+.workout-note-indicator { display: inline-flex; margin-left: 8px; color: var(--signal); vertical-align: -2px; }
+.workout-note-indicator svg { width: 15px; height: 15px; }
 .workout-summary-strip { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px 13px; }
 .workout-summary-strip span { display: inline-flex; align-items: center; gap: 5px; color: #bdc4b9 !important; }
 .workout-summary-strip svg { width: 14px; color: var(--signal); }
