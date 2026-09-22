@@ -29,6 +29,13 @@ import {
   type PersonalRecord,
   type RecordKind,
 } from './records';
+import {
+  computeAdherence,
+  computeBalance,
+  computeMuscleAudit,
+  type AdherenceWeek,
+  type BalanceSignal,
+} from './audit';
 
 export type TrendPoint = { date: string; value: number; label: string };
 
@@ -70,6 +77,9 @@ export type MuscleDistribution = {
   indirectSets: number;
   previousSets: number;
   volumeKg: number;
+  sessionsHit: number;
+  fourWeekAvgDirect: number;
+  bandLabel: 'zero' | 'low' | 'moderate' | 'high' | 'very_high';
 };
 
 export type MuscleWindow = '7' | '14' | '30';
@@ -89,6 +99,8 @@ export type DashboardData = {
     totalVolume30dKg: number;
     avgSessionMinutes: number;
     consistencyPercent: number;
+    adherencePct: number;
+    plannedSessionsPerWeek: number;
     volumeChangePercent: number;
   };
   muscles: MuscleDistribution[];
@@ -107,6 +119,8 @@ export type DashboardData = {
     volumeKg: number;
     sessions: number;
   }>;
+  adherenceWeeks: AdherenceWeek[];
+  balance: BalanceSignal[];
   records: Array<{
     exercise: string;
     date: string;
@@ -208,6 +222,7 @@ export function analyzeWorkoutHistory(
   now = new Date(),
   muscleOverrides: MuscleOverride[] = [],
   exerciseSlots: ExerciseSlot[] = [],
+  plannedDaysPerWeek = 4,
 ): DashboardData {
   const nowMs = now.getTime();
   const sorted = [...workouts].sort(
@@ -282,6 +297,45 @@ export function analyzeWorkoutHistory(
     (sum, workout) => sum + durationMinutes(workout),
     0,
   );
+  const auditObservations = sorted.flatMap((workout) =>
+    workout.exercises.flatMap((exercise) => {
+      const resolved = resolvedFor(exercise);
+      const overrideWeight =
+        overrideMap.get(exercise.exercise_template_id)?.countsAs ?? 1;
+      const countsAsWorking =
+        exerciseWorkingSets(exercise) * overrideWeight;
+      return countsAsWorking > 0
+        ? [
+            {
+              workoutId: workout.id,
+              performedAt: workout.start_time,
+              primary: resolved.primary,
+              secondary: resolved.secondary,
+              countsAsWorking,
+            },
+          ]
+        : [];
+    }),
+  );
+  const auditWindows = {
+    '7': computeMuscleAudit(auditObservations, now, 7),
+    '14': computeMuscleAudit(auditObservations, now, 14),
+    '30': computeMuscleAudit(auditObservations, now, 30),
+  } as const;
+  const fourWeekAudit = computeMuscleAudit(auditObservations, now, 28);
+  const balance = computeBalance(fourWeekAudit);
+  const adherenceWeeks = computeAdherence(
+    sorted.map((workout) => ({ id: workout.id, performedAt: workout.start_time })),
+    plannedDaysPerWeek,
+    now,
+  );
+  const adherencePct = adherenceWeeks.length
+    ? Math.round(
+        (adherenceWeeks.reduce((sum, week) => sum + week.adherencePct, 0) /
+          adherenceWeeks.length) *
+          10,
+      ) / 10
+    : 0;
 
   const muscleDistribution = (windowDays: number) => {
     const current = new Map<
@@ -328,12 +382,15 @@ export function analyzeWorkoutHistory(
       }
     }
 
+    const audit = auditWindows[String(windowDays) as MuscleWindow];
+    const auditMap = new Map(audit.map((item) => [item.muscle, item]));
     return MUSCLES.map((muscle) => {
       const value = current.get(muscle) ?? {
         directSets: 0,
         indirectSets: 0,
         volumeKg: 0,
       };
+      const auditValue = auditMap.get(muscle);
       return {
         key: muscle,
         name: muscleLabel(muscle),
@@ -341,6 +398,9 @@ export function analyzeWorkoutHistory(
         indirectSets: value.indirectSets,
         previousSets: previous.get(muscle) ?? 0,
         volumeKg: Math.round(value.volumeKg),
+        sessionsHit: auditValue?.sessionsHit ?? 0,
+        fourWeekAvgDirect: auditValue?.fourWeekAvgDirect ?? 0,
+        bandLabel: auditValue?.bandLabel ?? 'zero',
       };
     }).sort(
       (a, b) =>
@@ -666,6 +726,8 @@ export function analyzeWorkoutHistory(
         ? Math.round(totalMinutes / recent30.length)
         : 0,
       consistencyPercent,
+      adherencePct,
+      plannedSessionsPerWeek: plannedDaysPerWeek,
       volumeChangePercent,
     },
     muscles,
@@ -678,6 +740,8 @@ export function analyzeWorkoutHistory(
     },
     strengthTrends,
     workloadWeeks,
+    adherenceWeeks,
+    balance,
     records,
     exerciseStats,
     progressionStates,
@@ -861,6 +925,9 @@ function demoData(
     indirectSets: 0,
     previousSets: Number(previousSets),
     volumeKg: Number(volumeKg),
+    sessionsHit: Math.max(1, Math.round(Number(sets) / 2)),
+    fourWeekAvgDirect: Number(sets),
+    bandLabel: Number(sets) >= 9 ? ('high' as const) : ('moderate' as const),
   }));
   const scaleMuscles = (setMultiplier: number, volumeMultiplier: number) =>
     muscles.map((muscle) => ({
@@ -868,7 +935,23 @@ function demoData(
       sets: Math.round(muscle.sets * setMultiplier),
       previousSets: Math.round(muscle.previousSets * setMultiplier),
       volumeKg: Math.round(muscle.volumeKg * volumeMultiplier),
+      sessionsHit: Math.max(1, Math.round(muscle.sessionsHit * setMultiplier)),
+      fourWeekAvgDirect: Math.round(
+        muscle.fourWeekAvgDirect * setMultiplier * 10,
+      ) / 10,
     }));
+  const demoBalance = computeBalance(
+    muscles.map((muscle) => ({
+      muscle: muscle.key,
+      name: muscle.name,
+      directSets: muscle.fourWeekAvgDirect,
+      indirectSets: muscle.indirectSets,
+      sessionsHit: muscle.sessionsHit,
+      previousDirectSets: muscle.previousSets,
+      fourWeekAvgDirect: muscle.fourWeekAvgDirect,
+      bandLabel: muscle.bandLabel,
+    })),
+  );
   const sampleProgression = (
     exerciseTemplateId: string,
     title: string,
@@ -962,6 +1045,8 @@ function demoData(
       totalVolume30dKg: 88240,
       avgSessionMinutes: 59,
       consistencyPercent: 88,
+      adherencePct: 88,
+      plannedSessionsPerWeek: 4,
       volumeChangePercent: 8.4,
     },
     muscles,
@@ -1008,6 +1093,23 @@ function demoData(
       volumeKg: [18000, 21000, 19800, 23600, 22100, 20700, 24100, 22900][index],
       sessions: [3, 4, 3, 4, 4, 3, 4, 4][index],
     })),
+    adherenceWeeks: [
+      'Jul 20',
+      'Jul 27',
+      'Aug 3',
+      'Aug 10',
+      'Aug 17',
+      'Aug 24',
+      'Aug 31',
+      'Sep 7',
+    ].map((label, index) => ({
+      weekStart: label,
+      label,
+      plannedSessions: 4,
+      actualSessions: [3, 4, 3, 4, 4, 3, 4, 4][index],
+      adherencePct: Math.min(100, Math.round(([3, 4, 3, 4, 4, 3, 4, 4][index] / 4) * 100)),
+    })),
+    balance: demoBalance,
     records: [
       {
         exercise: 'Bench Press (Barbell)',
@@ -1162,6 +1264,8 @@ function unavailableData(message: string): DashboardData {
       totalVolume30dKg: 0,
       avgSessionMinutes: 0,
       consistencyPercent: 0,
+      adherencePct: 0,
+      plannedSessionsPerWeek: 4,
       volumeChangePercent: 0,
     },
     muscles: [],
@@ -1170,6 +1274,8 @@ function unavailableData(message: string): DashboardData {
     trend: { exercise: 'No verified lift data', change: 0, points: [] },
     strengthTrends: [],
     workloadWeeks: emptyWeeks,
+    adherenceWeeks: [],
+    balance: [],
     records: [],
     exerciseStats: [],
     progressionStates: [],
@@ -1201,15 +1307,17 @@ export async function getDashboardData(
   try {
     const { getHevySyncState, listStoredHevyWorkouts, listStoredTemplates } =
       await import('./hevy-repo');
+    const { getProfile } = await import('./storage');
     const { listMuscleOverrides } = await import('./muscle-repo');
     const { listExerciseSlots } = await import('./slot-repo');
-    const [workouts, templateRows, syncState, overrides, slots] =
+    const [workouts, templateRows, syncState, overrides, slots, profile] =
       await Promise.all([
         listStoredHevyWorkouts(userId, { limit: 5_000 }),
         listStoredTemplates(userId),
         getHevySyncState(userId),
         listMuscleOverrides(userId),
         listExerciseSlots(userId),
+        getProfile(userId),
       ]);
     if (workouts.length) {
       const dashboard = analyzeWorkoutHistory(
@@ -1219,6 +1327,7 @@ export async function getDashboardData(
         new Date(),
         overrides,
         slots,
+        profile.daysPerWeek,
       );
       try {
         const { saveProgressionStates } = await import('./progression-repo');
