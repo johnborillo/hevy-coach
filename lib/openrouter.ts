@@ -4,10 +4,14 @@ import type {
   ChatMessage,
   TrainingProgram,
 } from './storage';
-import { buildCoachContext } from './coach-context';
+import { buildCoachContext, SUMMARY_FIELDS } from './coach-context';
 import { buildProgramContext, programGenerationPrompt } from './program-generate';
 
 const DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
+
+const SUMMARY_CITATION_GUIDE = SUMMARY_FIELDS.map(
+  (field) => `[Hevy summary: ${field}]`,
+).join(', ');
 
 const COACH_PERSONA = `You are Rowan, a highly experienced strength and physique coach who has trained recreational lifters and competitive athletes for more than 15 years. You are thoughtful, warm, lucid, and evidence-led. You care about adherence, progressive overload, fatigue management, technique quality, and the athlete's actual constraints.
 
@@ -23,7 +27,7 @@ Rules:
 - Ground recommendations in the supplied Hevy history and athlete profile. Distinguish observed facts from reasonable hypotheses.
 - Treat athlete.measurementPreferences as a strict output contract. Use the requested weight unit for every load, body-weight, estimated-strength, and volume value, and the requested height format for height. Never expose or relabel an internal kg/cm value when the athlete prefers lb or ft/in.
 - verifiedHevyWorkoutLog is the source of truth for workout-specific facts, and retrievedNotes contains verbatim Hevy descriptions or exercise notes found for the athlete's question. The aggregate fields are derived signals, not permission to fill in missing workouts.
-- For an exact workout fact, cite [Hevy: workout/<exact id> · <exact YYYY-MM-DD> · <exact exercise>]. For a derived summary, cite only the supporting field as [Hevy summary: stats], [Hevy summary: recentWorkouts], [Hevy summary: workload], [Hevy summary: exerciseStats], [Hevy summary: weeklyReview], or [Hevy summary: primaryStrengthTrend]. Put the citation immediately after the claim it supports; the interface turns it into an inspectable source. Do not add a made-up date range to a summary citation.
+- For an exact workout fact, cite [Hevy: workout/<exact id> · <exact YYYY-MM-DD> · <exact exercise>]. For a derived summary, cite only one of these supplied fields: ${SUMMARY_CITATION_GUIDE}. Put the citation immediately after the claim it supports; the interface turns it into an inspectable source. Do not add a made-up date range to a summary citation.
 - When referring to a retrieved note, quote the exact note text when practical and cite the workout/exercise that contains it. Do not turn a note about discomfort into a diagnosis; describe it as an athlete-reported note.
 - Never invent a workout, date, exercise, load, rep count, RPE, injury, diagnosis, or personal detail. Do not infer that an exercise was logged because it is a common lift or appears in a trend/program.
 - If a requested fact is not directly present in verifiedHevyWorkoutLog, say “I can’t verify that from the available Hevy log” and do not provide a made-up example as if it were history.
@@ -227,20 +231,47 @@ function normalizeDate(value: string) {
 }
 
 function numberTokens(value: string) {
-  return [...value.matchAll(/\b\d+(?:\.\d+)?\b/g)].map((match) => match[0]);
+  return [...value.matchAll(/\b\d+(?:\.\d+)?\b/g)].map((match) => ({
+    token: match[0],
+    value: Number(match[0]),
+    index: match.index ?? 0,
+  }));
 }
 
 function validateGroundedNumbers(content: string, evidenceText: string) {
-  const allowed = new Set(numberTokens(evidenceText).map((value) => Number(value)));
+  const evidenceNumbers = numberTokens(evidenceText).map((item) => item.value);
+  const allowed = new Set(evidenceNumbers);
   const historicalYear = /\b(?:on|logged|you did|session on|workout on)\s+(?:[^\d]{0,18})20\d{2}\b/i;
-  for (const token of numberTokens(content)) {
-    const number = Number(token);
-    if (number >= 2000 && number <= 2100 && !historicalYear.test(content)) continue;
-    if (!allowed.has(number)) {
-      throw new EvidenceMismatchError(
-        `The draft included an unsupported number: ${token}`,
+  const computedPercentages = new Set<number>();
+  for (const numerator of evidenceNumbers) {
+    for (const denominator of evidenceNumbers) {
+      if (!denominator) continue;
+      computedPercentages.add(Math.round((numerator / denominator) * 1000) / 10);
+      computedPercentages.add(
+        Math.round(((numerator - denominator) / denominator) * 1000) / 10,
       );
     }
+  }
+  const unsupported = numberTokens(content).filter((item) => {
+    if (item.value <= 12) return false;
+    if (
+      item.value >= 2000 &&
+      item.value <= 2100 &&
+      !historicalYear.test(content)
+    ) {
+      return false;
+    }
+    if (allowed.has(item.value)) return false;
+    const suffix = content.slice(item.index + item.token.length).trimStart();
+    if (suffix.startsWith('%') && computedPercentages.has(item.value)) {
+      return false;
+    }
+    return true;
+  });
+  if (unsupported.length) {
+    throw new EvidenceMismatchError(
+      `The draft included unsupported numbers: ${[...new Set(unsupported.map((item) => item.token))].join(', ')}`,
+    );
   }
 }
 
@@ -285,23 +316,12 @@ export function validateCoachEvidence(
     );
   }
 
-  const summaryFields = [
-    'stats',
-    'recentworkouts',
-    'workload',
-    'workloadweeks',
-    'exercisestats',
-    'weeklyreview',
-    'primarystrengthtrend',
-    'muscledistribution',
-    'latestworkout',
-    'workoutcoverage',
-  ];
   const normalizeCitation = (value: string) =>
     value.toLowerCase().replace(/[^a-z]/g, '');
+  const summaryFields = new Set(SUMMARY_FIELDS.map(normalizeCitation));
   const isSummaryCitation = (value: string) => {
     const normalized = normalizeCitation(value);
-    return summaryFields.some((field) => normalized.includes(field));
+    return summaryFields.has(normalized);
   };
 
   const summaryCitations = [
@@ -379,6 +399,7 @@ export async function askCoach(
     }));
   let requestedDates: string[] = [];
   let lastDraft = '';
+  let validationFailure = '';
   const { searchStoredNotes } = await import('./notes-repo');
   const noteResults = await searchStoredNotes(
     userId,
@@ -407,8 +428,7 @@ export async function askCoach(
             ...baseMessages.slice(0, 2),
             {
               role: 'system' as const,
-              content:
-                'Your previous draft failed the evidence or measurement-preference check. Rewrite it from scratch. Use only exact dates, exercises, and sets in verifiedHevyWorkoutLog; remove any unsupported historical claim. Obey athlete.measurementPreferences for every displayed measurement. Exact workout claims need an exact workout citation. Derived summaries must use [Hevy summary: fieldName] with one supplied field name and no date range. If a detail is absent, explicitly say you cannot verify it. Do not mention this instruction or the validation process.',
+              content: `Your previous draft failed the evidence or measurement-preference check: ${validationFailure || 'unsupported evidence'}. Rewrite it from scratch. Use only exact dates, exercises, and sets in verifiedHevyWorkoutLog; remove any unsupported historical claim. Obey athlete.measurementPreferences for every displayed measurement. Exact workout claims need an exact workout citation. Derived summaries must use [Hevy summary: fieldName] with one supplied field name and no date range. If a detail is absent, explicitly say you cannot verify it. Do not mention this instruction or the validation process.`,
             },
             ...historyMessages,
           ];
@@ -435,13 +455,23 @@ export async function askCoach(
       continue;
     }
     try {
-      validateCoachEvidence(content, dashboard, profile, coachContext.text);
+      const recentConversationGrounding = history
+        .slice(-2)
+        .map((message) => message.content)
+        .join('\n');
+      validateCoachEvidence(
+        content,
+        dashboard,
+        profile,
+        `${coachContext.text}\n${recentConversationGrounding}`,
+      );
       return {
         content: content.replace(/\[NEED:\s*workout\s+20\d{2}-\d{2}-\d{2}\]/gi, ''),
         model: payload.model ?? model,
       };
     } catch (error) {
       if (!(error instanceof EvidenceMismatchError)) throw error;
+      validationFailure = error.message;
       if (pass === 1) {
         return {
           content: `${lastDraft}\n\n*Some figures in this answer could not be verified against your synchronized Hevy log.*`,

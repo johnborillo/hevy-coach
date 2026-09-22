@@ -4,6 +4,7 @@ import {
   validateCoachEvidence,
 } from '../lib/openrouter';
 import { buildCoachContext } from '../lib/coach-context';
+import { SUMMARY_FIELDS } from '../lib/coach-context';
 import type { DashboardData } from '../lib/hevy';
 import type { AthleteProfile } from '../lib/storage';
 
@@ -99,6 +100,52 @@ describe('coach evidence validation', () => {
     expect(() =>
       validateCoachEvidence('You logged 99 sessions this month.', dashboard, profile, evidence),
     ).toThrow(EvidenceMismatchError);
+  });
+
+  it('uses the coach context summary fields as the citation allow-list', () => {
+    for (const field of SUMMARY_FIELDS) {
+      expect(() =>
+        validateCoachEvidence(
+          `Useful signal [Hevy summary: ${field}]`,
+          dashboard,
+          profile,
+        ),
+      ).not.toThrow();
+    }
+    expect(() =>
+      validateCoachEvidence(
+        'Old signal [Hevy summary: exerciseStats]',
+        dashboard,
+        profile,
+      ),
+    ).toThrow(EvidenceMismatchError);
+    expect(() =>
+      validateCoachEvidence(
+        'Old signal [Hevy summary: primaryStrengthTrend]',
+        dashboard,
+        profile,
+      ),
+    ).toThrow(EvidenceMismatchError);
+  });
+
+  it('rejects an invented load while allowing small coaching counts', () => {
+    const evidence = JSON.stringify({ load: '100 lb', reps: 8 });
+    expect(() =>
+      validateCoachEvidence(
+        'Your bench is at 105 lb.',
+        dashboard,
+        profile,
+        evidence,
+      ),
+    ).toThrow(EvidenceMismatchError);
+    expect(() =>
+      validateCoachEvidence(
+        'Use 3 sets of 10 reps.',
+        dashboard,
+        profile,
+        evidence,
+      ),
+    ).not.toThrow();
   });
 
   it('keeps chat context bounded while retrieving a referenced exercise', () => {

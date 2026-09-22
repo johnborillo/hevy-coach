@@ -1,5 +1,5 @@
 import { getDashboardData } from '@/lib/hevy';
-import { askCoach, EvidenceMismatchError } from '@/lib/openrouter';
+import { askCoach } from '@/lib/openrouter';
 import { requestUserId } from '@/lib/request-user';
 import { getProfile, listConversations, listMessages, saveMessage } from '@/lib/storage';
 
@@ -20,6 +20,8 @@ export async function GET(request: Request) {
 
 function fallbackAnswer(question: string, dashboard: Awaited<ReturnType<typeof getDashboardData>>) {
   const prompt = question.toLowerCase();
+  const reviewPointer =
+    'Open the Weekly Review card on Today for the full evidence-backed wins, watch items, and next actions.';
   if (prompt.includes('break') || prompt.includes('return') || prompt.includes('hiatus')) return dashboard.insights.return;
   if (prompt.includes('plateau') || prompt.includes('stuck')) return dashboard.insights.plateau;
   if (prompt.includes('progress') || prompt.includes('next')) {
@@ -29,9 +31,9 @@ function fallbackAnswer(question: string, dashboard: Awaited<ReturnType<typeof g
     return dashboard.insights.progress;
   }
   if (prompt.includes('week') || prompt.includes('review')) {
-    return `This week: ${dashboard.weeklyReview.wins.join(' ')} Watch: ${dashboard.weeklyReview.watch.join(' ')} Next: ${dashboard.weeklyReview.nextSteps.join(' ')}`;
+    return reviewPointer;
   }
-  return `I can ground a plan in your Hevy history. Your latest session was ${dashboard.lastWorkout}; you logged ${dashboard.stats.workingSets7d} working sets in the last seven days. Ask about a plateau, a return plan, weekly feedback, or the next session.`;
+  return `I can ground a plan in your Hevy history. Your latest session was ${dashboard.lastWorkout}; you logged ${dashboard.stats.workingSets7d} working sets in the last seven days. Ask about a plateau, a return plan, weekly feedback, or the next session. ${reviewPointer}`;
 }
 
 export async function POST(request: Request) {
@@ -60,14 +62,10 @@ export async function POST(request: Request) {
         name: error instanceof Error ? error.name : 'unknown',
         message: error instanceof Error ? error.message : 'unknown',
       });
-      const evidenceMismatch = error instanceof EvidenceMismatchError;
       answer = {
-        content: `${fallbackAnswer(content, dashboard)}\n\n*The AI draft was withheld because it referenced workout evidence that could not be matched to your synchronized Hevy log. This answer uses only the verified training signals above.*`,
+        content: `${fallbackAnswer(content, dashboard)}\n\n*The AI provider was unavailable after retrying, so this answer uses only the verified training signals calculated from your Hevy history.*`,
         model: 'evidence-engine',
       };
-      if (!evidenceMismatch) {
-        answer.content = `${fallbackAnswer(content, dashboard)}\n\n*The AI provider was unavailable after retrying, so this answer uses only the verified training signals calculated from your Hevy history.*`;
-      }
     }
     const assistantMessage = await saveMessage(userId, conversationId, 'assistant', answer.content, answer.model);
     return Response.json({ userMessage, assistantMessage });

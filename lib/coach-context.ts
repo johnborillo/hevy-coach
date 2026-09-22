@@ -3,6 +3,17 @@ import type { AthleteProfile, ChatMessage } from './storage';
 import { buildAthleteContext } from './context';
 import type { NoteSearchResult } from './notes-repo';
 
+export const SUMMARY_FIELDS = [
+  'findings',
+  'progression',
+  'muscleAudit',
+  'adherence',
+  'bodyWeightTrend',
+  'activeTrainingBlock',
+  'workoutCoverage',
+  'retrievedNotes',
+] as const;
+
 export type CoachContextOptions = {
   additionalDates?: string[];
   noteResults?: NoteSearchResult[];
