@@ -22,6 +22,7 @@
 .today-lower-grid { grid-template-columns: minmax(0, 1.3fr) minmax(330px, 0.7fr); }
 .progress-grid { grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.7fr); }
 .distribution-grid { grid-template-columns: minmax(300px, 0.65fr) minmax(0, 1.35fr); margin-top: 18px; }
+.audit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 18px; }
 .profile-layout { grid-template-columns: minmax(270px, 0.65fr) minmax(0, 1.35fr); align-items: start; }
 .program-layout { grid-template-columns: 340px minmax(0, 1fr); align-items: start; }
 
@@ -93,6 +94,28 @@
 .record-list b { font-family: var(--font-geist-mono); font-size: 0.73rem; }
 .muscle-row > div:first-child > span:last-child { display: flex; align-items: baseline; gap: 8px; }
 .muscle-row small { color: #8a9186; font-size: 0.67rem; }
+.muscle-zero { opacity: 0.72; }
+.muscle-zero .muscle-stack,
+.muscle-low .muscle-stack { background: #f2e9dc; }
+.muscle-row .status-pill { margin-left: 6px; padding: 3px 6px; font-size: 0.56rem; vertical-align: middle; }
+.audit-panel { min-width: 0; padding: clamp(20px, 2.4vw, 30px); border: 1px solid var(--line); border-radius: 22px; background: var(--panel); }
+.balance-list,
+.adherence-list { display: grid; gap: 0; margin-top: 14px; }
+.balance-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; border-top: 1px solid var(--line); }
+.balance-row > div { min-width: 0; }
+.balance-row strong,
+.balance-row small { display: block; }
+.balance-row strong { color: #30372d; font-size: 0.78rem; }
+.balance-row small { max-width: 430px; margin-top: 3px; color: #7d8578; font-size: 0.67rem; line-height: 1.35; }
+.balance-row .status-pill { flex: none; }
+.adherence-row { display: grid; grid-template-columns: 88px minmax(0, 1fr) 42px; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.adherence-row strong,
+.adherence-row small { display: block; }
+.adherence-row strong { color: #30372d; font-size: 0.75rem; }
+.adherence-row small { margin-top: 3px; color: #7d8578; font-size: 0.65rem; }
+.adherence-row b { color: #526a16; font-family: var(--font-geist-mono); font-size: 0.68rem; text-align: right; }
+.adherence-track { height: 7px; overflow: hidden; border-radius: 999px; background: #e8ede5; }
+.adherence-track span { display: block; height: 100%; border-radius: inherit; background: var(--signal-deep); }
 
 .table-scroll-scroll { overflow-x: auto; margin-top: 18px; }
 .table-scroll { overflow-x: auto; margin-top: 18px; }
@@ -527,6 +550,7 @@ td small { color: #8a9286; font-size: 0.68rem; }
   .today-lower-grid,
   .progress-grid,
   .distribution-grid,
+  .audit-grid,
   .profile-layout,
   .program-layout { grid-template-columns: 1fr; }
   .profile-intro,

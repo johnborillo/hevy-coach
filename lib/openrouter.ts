@@ -297,9 +297,16 @@ function compactContext(profile: AthleteProfile, dashboard: DashboardData) {
       muscleDistribution: dashboard.muscles.map((muscle) => ({
         name: muscle.name,
         sets: muscle.sets,
+        directSets: muscle.sets,
+        indirectSets: muscle.indirectSets,
+        sessionsHit: muscle.sessionsHit,
+        fourWeekAvgDirect: muscle.fourWeekAvgDirect,
+        band: muscle.bandLabel,
         previousSets: muscle.previousSets,
         loadVolume: displayWeight(muscle.volumeKg),
       })),
+      balance: dashboard.balance,
+      adherence: dashboard.adherenceWeeks,
       primaryStrengthTrend: {
         exercise: dashboard.trend.exercise,
         changePercent: dashboard.trend.change,

@@ -208,6 +208,20 @@ function progressionTone(
   return 'neutral' as const;
 }
 
+const BAND_LABELS = {
+  zero: 'Zero',
+  low: 'Low',
+  moderate: 'Moderate',
+  high: 'High',
+  very_high: 'Very high',
+} as const;
+
+function auditTone(band: keyof typeof BAND_LABELS) {
+  if (band === 'zero' || band === 'low') return 'warn' as const;
+  if (band === 'very_high') return 'neutral' as const;
+  return 'good' as const;
+}
+
 function MiniSparkline({
   values,
   color = 'var(--signal-deep)',
@@ -1245,9 +1259,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 icon={Clock3}
               />
               <StatCard
-                label="Training consistency"
-                value={`${data.stats.consistencyPercent}%`}
-                detail="Active weeks in the last eight"
+                label="Training adherence"
+                value={`${data.stats.adherencePct}%`}
+                detail={`${data.stats.plannedSessionsPerWeek} sessions/week planned`}
                 icon={Flame}
               />
             </section>
@@ -1516,9 +1530,17 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 </div>
                 <div className="muscle-bars">
                   {muscleDistribution.map((muscle) => (
-                    <div className="muscle-row" key={muscle.key}>
+                    <div
+                      className={`muscle-row muscle-${muscle.bandLabel}`}
+                      key={muscle.key}
+                    >
                       <div>
-                        <span>{muscle.name}</span>
+                        <span>
+                          {muscle.name}
+                          <StatusPill tone={auditTone(muscle.bandLabel)}>
+                            {BAND_LABELS[muscle.bandLabel]}
+                          </StatusPill>
+                        </span>
                         <span>
                           <strong>
                             {Math.round(muscle.sets * 10) / 10} direct
@@ -1532,7 +1554,8 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                             {Math.round(
                               (muscle.sets - muscle.previousSets) * 10,
                             ) / 10}{' '}
-                            vs prior {muscleWindow}d
+                            vs prior {muscleWindow}d · {muscle.sessionsHit}{' '}
+                            sessions · {muscle.fourWeekAvgDirect} 4w avg
                           </small>
                         </span>
                       </div>
@@ -1908,6 +1931,78 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                       })}
                     </tbody>
                   </table>
+                </div>
+              </article>
+            </section>
+            <section className="audit-grid" aria-label="Training audit">
+              <article className="audit-panel">
+                <div className="panel-heading compact">
+                  <div>
+                    <p className="eyebrow">4-WEEK BALANCE</p>
+                    <div className="panel-title-row">
+                      <h2>Where the work is going</h2>
+                      <InfoTooltip title="Balance signals">
+                        These ratios compare your own four-week direct-set distribution. They are signals to investigate, not universal prescriptions.
+                      </InfoTooltip>
+                    </div>
+                  </div>
+                </div>
+                <div className="balance-list">
+                  {data.balance.map((signal) => (
+                    <div className="balance-row" key={signal.key}>
+                      <div>
+                        <strong>{signal.label}</strong>
+                        <small>{signal.explanation}</small>
+                      </div>
+                      <StatusPill
+                        tone={
+                          signal.status === 'watch'
+                            ? 'warn'
+                            : signal.status === 'no_data'
+                              ? 'neutral'
+                              : 'good'
+                        }
+                      >
+                        {signal.key === 'calves'
+                          ? `${signal.value ?? 0} sets`
+                          : signal.value == null
+                            ? 'No data'
+                            : `${signal.value} · ${signal.typicalRange}`}
+                      </StatusPill>
+                    </div>
+                  ))}
+                </div>
+              </article>
+              <article className="audit-panel">
+                <div className="panel-heading compact">
+                  <div>
+                    <p className="eyebrow">PLANNED VS ACTUAL</p>
+                    <div className="panel-title-row">
+                      <h2>Training adherence</h2>
+                      <InfoTooltip title="Training adherence">
+                        Actual logged sessions divided by the sessions per week in your athlete profile. Weeks cap at 100% when you train above plan.
+                      </InfoTooltip>
+                    </div>
+                  </div>
+                  <StatusPill tone={data.stats.adherencePct >= 80 ? 'good' : 'warn'}>
+                    {data.stats.adherencePct}% average
+                  </StatusPill>
+                </div>
+                <div className="adherence-list">
+                  {data.adherenceWeeks.map((week) => (
+                    <div className="adherence-row" key={week.weekStart}>
+                      <div>
+                        <strong>{week.label}</strong>
+                        <small>
+                          {week.actualSessions}/{week.plannedSessions} sessions
+                        </small>
+                      </div>
+                      <div className="adherence-track">
+                        <span style={{ width: `${week.adherencePct}%` }} />
+                      </div>
+                      <b>{week.adherencePct}%</b>
+                    </div>
+                  ))}
                 </div>
               </article>
             </section>
