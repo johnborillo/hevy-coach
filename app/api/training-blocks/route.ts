@@ -6,6 +6,7 @@ import {
   listTrainingBlocks,
   type TrainingBlockKind,
 } from '@/lib/training-block-repo';
+import { refreshDerivedAnalysis } from '@/lib/derive';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,13 +57,15 @@ export async function POST(request: Request) {
       Number.isFinite(new Date(body.endsAt).getTime())
         ? new Date(body.endsAt).toISOString()
         : null;
-    const block = await createTrainingBlock(requestUserId(request.headers), {
+    const userId = requestUserId(request.headers);
+    const block = await createTrainingBlock(userId, {
       name,
       kind,
       startsAt: new Date(startsAt).toISOString(),
       endsAt,
       programId: typeof body.programId === 'string' ? body.programId : null,
     });
+    await refreshDerivedAnalysis(userId, 'settings');
     return Response.json({ block }, { status: 201 });
   } catch {
     return Response.json(
@@ -78,7 +81,9 @@ export async function DELETE(request: Request) {
     if (typeof body.id !== 'string' || !body.id.trim()) {
       return Response.json({ error: 'Block id is required.' }, { status: 400 });
     }
-    await deleteTrainingBlock(requestUserId(request.headers), body.id);
+    const userId = requestUserId(request.headers);
+    await deleteTrainingBlock(userId, body.id);
+    await refreshDerivedAnalysis(userId, 'settings');
     return Response.json({ ok: true });
   } catch {
     return Response.json(

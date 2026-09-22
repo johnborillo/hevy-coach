@@ -1,6 +1,7 @@
 import { saveMuscleOverride } from '@/lib/muscle-repo';
 import { isMuscle, type Muscle } from '@/lib/muscles';
 import { requestUserId } from '@/lib/request-user';
+import { refreshDerivedAnalysis } from '@/lib/derive';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,15 +27,14 @@ export async function PUT(request: Request) {
           isMuscle(muscle),
         )
       : [];
-    const muscleOverride = await saveMuscleOverride(
-      requestUserId(request.headers),
-      {
+    const userId = requestUserId(request.headers);
+    const muscleOverride = await saveMuscleOverride(userId, {
         exerciseTemplateId,
         primaryMuscle: body.primaryMuscle,
         secondaryMuscles,
         countsAs: 1,
-      },
-    );
+      });
+    await refreshDerivedAnalysis(userId, 'settings');
     return Response.json({ muscleOverride });
   } catch (error) {
     console.error('Muscle override save failed', {

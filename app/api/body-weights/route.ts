@@ -4,6 +4,7 @@ import {
   saveBodyWeight,
   summarizeBodyWeight,
 } from '@/lib/body-weight-repo';
+import { refreshDerivedAnalysis } from '@/lib/derive';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,11 +38,13 @@ export async function POST(request: Request) {
       Number.isFinite(new Date(body.measuredAt).getTime())
         ? new Date(body.measuredAt).toISOString()
         : new Date().toISOString();
+    const userId = requestUserId(request.headers);
     const point = await saveBodyWeight(
-      requestUserId(request.headers),
+      userId,
       Math.round(weightKg * 100) / 100,
       measuredAt,
     );
+    await refreshDerivedAnalysis(userId, 'settings');
     return Response.json({ point }, { status: 201 });
   } catch {
     return Response.json(

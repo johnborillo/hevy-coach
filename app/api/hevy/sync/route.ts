@@ -1,5 +1,6 @@
 import { requestUserId } from '@/lib/request-user';
 import { syncHevy } from '@/lib/hevy-sync';
+import { refreshDerivedAnalysis } from '@/lib/derive';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,10 +17,12 @@ export async function POST(request: Request) {
     const body = (await request.json().catch(() => ({}))) as {
       force?: boolean;
     };
-    const result = await syncHevy(requestUserId(request.headers), apiKey, {
+    const userId = requestUserId(request.headers);
+    const result = await syncHevy(userId, apiKey, {
       force: Boolean(body.force),
       maxFullSyncPages: 3,
     });
+    await refreshDerivedAnalysis(userId, 'sync');
     return Response.json(result);
   } catch (error) {
     console.error('Hevy sync failed', {

@@ -1,5 +1,6 @@
 import { getProfile, saveProfile, type AthleteProfile } from '@/lib/storage';
 import { requestUserId } from '@/lib/request-user';
+import { refreshDerivedAnalysis } from '@/lib/derive';
 
 export const dynamic = 'force-dynamic';
 
@@ -90,7 +91,9 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   try {
     const profile = cleanProfile(await request.json());
-    await saveProfile(requestUserId(request.headers), profile);
+    const userId = requestUserId(request.headers);
+    await saveProfile(userId, profile);
+    await refreshDerivedAnalysis(userId, 'settings');
     return Response.json({ profile });
   } catch {
     return Response.json(
