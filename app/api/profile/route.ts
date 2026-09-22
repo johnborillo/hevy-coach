@@ -19,6 +19,13 @@ function optionalDecimal(value: unknown, min: number, max: number) {
     : null;
 }
 
+function increment(value: unknown, fallback: number) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 && number <= 50
+    ? number
+    : fallback;
+}
+
 function cleanProfile(value: Partial<AthleteProfile>): AthleteProfile {
   return {
     displayName: String(value.displayName || 'Athlete').slice(0, 80),
@@ -47,6 +54,23 @@ function cleanProfile(value: Partial<AthleteProfile>): AthleteProfile {
     equipment: String(value.equipment || 'Full gym').slice(0, 400),
     limitations: String(value.limitations || '').slice(0, 1000),
     preferences: String(value.preferences || '').slice(0, 1000),
+    phase: ['cut', 'maintain', 'lean_gain', 'gain', 'recomp'].includes(
+      String(value.phase),
+    )
+      ? (String(value.phase) as AthleteProfile['phase'])
+      : 'maintain',
+    phaseStartedAt: String(value.phaseStartedAt || '').slice(0, 20),
+    dailyCalories: optionalNumber(value.dailyCalories, 500, 20_000),
+    proteinGrams: optionalNumber(value.proteinGrams, 20, 500),
+    sleepHoursTypical: optionalDecimal(value.sleepHoursTypical, 0, 24),
+    dropsetWeight: optionalDecimal(value.dropsetWeight, 0, 1) ?? 0.5,
+    loadIncrements: {
+      barbell: increment(value.loadIncrements?.barbell, 2.5),
+      dumbbell: increment(value.loadIncrements?.dumbbell, 2),
+      machine: increment(value.loadIncrements?.machine, 5),
+      cable: increment(value.loadIncrements?.cable, 2.5),
+    },
+    timezone: String(value.timezone || 'UTC').slice(0, 80),
   };
 }
 

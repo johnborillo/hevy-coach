@@ -36,6 +36,8 @@ import {
   type AdherenceWeek,
   type BalanceSignal,
 } from './audit';
+import type { BodyWeightPoint } from './body-weight-repo';
+import type { TrainingBlock } from './training-block-repo';
 
 export type TrendPoint = { date: string; value: number; label: string };
 
@@ -89,6 +91,12 @@ export type DashboardData = {
   connected: boolean;
   sourceLabel: string;
   syncMessage: string;
+  bodyWeightTrend?: {
+    average7d: number | null;
+    slopeKgPerWeek: number | null;
+    latest: number | null;
+  };
+  activeTrainingBlock?: TrainingBlock | null;
   athleteName: string;
   lastWorkout: string;
   stats: {
@@ -223,6 +231,8 @@ export function analyzeWorkoutHistory(
   muscleOverrides: MuscleOverride[] = [],
   exerciseSlots: ExerciseSlot[] = [],
   plannedDaysPerWeek = 4,
+  phase: 'cut' | 'maintain' | 'lean_gain' | 'gain' | 'recomp' = 'maintain',
+  activeBlockKind: TrainingBlock['kind'] | null = null,
 ): DashboardData {
   const nowMs = now.getTime();
   const sorted = [...workouts].sort(
@@ -302,8 +312,7 @@ export function analyzeWorkoutHistory(
       const resolved = resolvedFor(exercise);
       const overrideWeight =
         overrideMap.get(exercise.exercise_template_id)?.countsAs ?? 1;
-      const countsAsWorking =
-        exerciseWorkingSets(exercise) * overrideWeight;
+      const countsAsWorking = exerciseWorkingSets(exercise) * overrideWeight;
       return countsAsWorking > 0
         ? [
             {
@@ -325,7 +334,10 @@ export function analyzeWorkoutHistory(
   const fourWeekAudit = computeMuscleAudit(auditObservations, now, 28);
   const balance = computeBalance(fourWeekAudit);
   const adherenceWeeks = computeAdherence(
-    sorted.map((workout) => ({ id: workout.id, performedAt: workout.start_time })),
+    sorted.map((workout) => ({
+      id: workout.id,
+      performedAt: workout.start_time,
+    })),
     plannedDaysPerWeek,
     now,
   );
@@ -512,7 +524,7 @@ export function analyzeWorkoutHistory(
         representativeTemplateId,
         slot?.name ?? sessions.at(-1)?.exerciseTitle ?? 'Unknown exercise',
         sessions,
-        { slotId: slot?.id ?? null },
+        { slotId: slot?.id ?? null, phase, activeBlockKind },
       );
     })
     .sort(
@@ -586,8 +598,7 @@ export function analyzeWorkoutHistory(
     (record) => ({
       exercise: record.exercise,
       date: formatShortDate(record.performedAt),
-      valueKg:
-        record.kind === 'reps_at_load' ? record.loadKg : record.value,
+      valueKg: record.kind === 'reps_at_load' ? record.loadKg : record.value,
       reps: record.reps,
       weightKg: record.loadKg,
       kind: record.kind,
@@ -936,9 +947,8 @@ function demoData(
       previousSets: Math.round(muscle.previousSets * setMultiplier),
       volumeKg: Math.round(muscle.volumeKg * volumeMultiplier),
       sessionsHit: Math.max(1, Math.round(muscle.sessionsHit * setMultiplier)),
-      fourWeekAvgDirect: Math.round(
-        muscle.fourWeekAvgDirect * setMultiplier * 10,
-      ) / 10,
+      fourWeekAvgDirect:
+        Math.round(muscle.fourWeekAvgDirect * setMultiplier * 10) / 10,
     }));
   const demoBalance = computeBalance(
     muscles.map((muscle) => ({
@@ -1107,7 +1117,10 @@ function demoData(
       label,
       plannedSessions: 4,
       actualSessions: [3, 4, 3, 4, 4, 3, 4, 4][index],
-      adherencePct: Math.min(100, Math.round(([3, 4, 3, 4, 4, 3, 4, 4][index] / 4) * 100)),
+      adherencePct: Math.min(
+        100,
+        Math.round(([3, 4, 3, 4, 4, 3, 4, 4][index] / 4) * 100),
+      ),
     })),
     balance: demoBalance,
     records: [
@@ -1308,17 +1321,31 @@ export async function getDashboardData(
     const { getHevySyncState, listStoredHevyWorkouts, listStoredTemplates } =
       await import('./hevy-repo');
     const { getProfile } = await import('./storage');
+    const { listBodyWeights, summarizeBodyWeight } =
+      await import('./body-weight-repo');
+    const { activeTrainingBlock, listTrainingBlocks } =
+      await import('./training-block-repo');
     const { listMuscleOverrides } = await import('./muscle-repo');
     const { listExerciseSlots } = await import('./slot-repo');
-    const [workouts, templateRows, syncState, overrides, slots, profile] =
-      await Promise.all([
-        listStoredHevyWorkouts(userId, { limit: 5_000 }),
-        listStoredTemplates(userId),
-        getHevySyncState(userId),
-        listMuscleOverrides(userId),
-        listExerciseSlots(userId),
-        getProfile(userId),
-      ]);
+    const [
+      workouts,
+      templateRows,
+      syncState,
+      overrides,
+      slots,
+      profile,
+      bodyWeightRows,
+      trainingBlocks,
+    ] = await Promise.all([
+      listStoredHevyWorkouts(userId, { limit: 5_000 }),
+      listStoredTemplates(userId),
+      getHevySyncState(userId),
+      listMuscleOverrides(userId),
+      listExerciseSlots(userId),
+      getProfile(userId),
+      listBodyWeights(userId),
+      listTrainingBlocks(userId),
+    ]);
     if (workouts.length) {
       const dashboard = analyzeWorkoutHistory(
         workouts,
@@ -1328,6 +1355,8 @@ export async function getDashboardData(
         overrides,
         slots,
         profile.daysPerWeek,
+        profile.phase,
+        activeTrainingBlock(trainingBlocks)?.kind ?? null,
       );
       try {
         const { saveProgressionStates } = await import('./progression-repo');
@@ -1367,6 +1396,10 @@ export async function getDashboardData(
             : ' · importing full history';
       return {
         ...dashboard,
+        bodyWeightTrend: summarizeBodyWeight(
+          bodyWeightRows as BodyWeightPoint[],
+        ),
+        activeTrainingBlock: activeTrainingBlock(trainingBlocks),
         sourceLabel: 'Synchronized Hevy history',
         syncMessage: `Analyzed ${workouts.length} workouts${progress}`,
       };

@@ -136,4 +136,24 @@ describe('progression engine', () => {
       recommendation: 'none',
     });
   });
+
+  it('holds a regressing lift during a cut instead of immediately reducing volume', () => {
+    const state = computeProgression(
+      'squat',
+      'Squat (Barbell)',
+      sessions([
+        [100, 6, 7],
+        [100, 6, 7],
+        [97.5, 6, 7],
+        [97.5, 5, 7],
+        [95, 5, 7],
+      ]),
+      { phase: 'cut' },
+    );
+    expect(state).toMatchObject({
+      status: 'regressing',
+      recommendation: 'hold',
+    });
+    expect(state.rationale).toContain('during a cut');
+  });
 });

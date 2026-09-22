@@ -76,6 +76,10 @@ import type {
   TrainingProgram,
   WeightUnit,
 } from '@/lib/storage';
+import type {
+  TrainingBlock,
+  TrainingBlockKind,
+} from '@/lib/training-block-repo';
 
 type View = 'today' | 'progress' | 'history' | 'coach' | 'program' | 'profile';
 type LedgerSortKey =
@@ -112,6 +116,14 @@ const EMPTY_PROFILE: AthleteProfile = {
   equipment: 'Full gym',
   limitations: '',
   preferences: '',
+  phase: 'maintain',
+  phaseStartedAt: '',
+  dailyCalories: null,
+  proteinGrams: null,
+  sleepHoursTypical: null,
+  dropsetWeight: 0.5,
+  loadIncrements: { barbell: 2.5, dumbbell: 2, machine: 5, cable: 2.5 },
+  timezone: 'UTC',
 };
 
 const STARTERS = [
@@ -152,6 +164,20 @@ function toDisplayWeight(value: number, unit: WeightUnit) {
 
 function weight(value: number, unit: WeightUnit, digits = 1) {
   return `${toDisplayWeight(value, unit).toLocaleString(undefined, { maximumFractionDigits: digits })} ${unit}`;
+}
+
+function formatWeight(value: number, unit: WeightUnit) {
+  return weight(value, unit, 1);
+}
+
+function formatShortDate(value: string) {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat(undefined, {
+        month: 'short',
+        day: 'numeric',
+      }).format(date)
+    : value;
 }
 
 function volume(value: number, unit: WeightUnit) {
@@ -375,6 +401,22 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   );
   const [profile, setProfile] = useState<AthleteProfile>(EMPTY_PROFILE);
   const [profileState, setProfileState] = useState('Save athlete profile');
+  const [bodyWeightState, setBodyWeightState] = useState('');
+  const [bodyWeightSummary, setBodyWeightSummary] = useState(
+    data.bodyWeightTrend ?? {
+      average7d: null,
+      slopeKgPerWeek: null,
+      latest: null,
+    },
+  );
+  const [trainingBlocks, setTrainingBlocks] = useState<TrainingBlock[]>([]);
+  const [blockDraft, setBlockDraft] = useState({
+    name: '',
+    kind: 'accumulation' as TrainingBlockKind,
+    startsAt: new Date().toISOString().slice(0, 10),
+    endsAt: '',
+  });
+  const [blockState, setBlockState] = useState('');
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeConversation, setActiveConversation] = useState<string | null>(
     null,
@@ -724,23 +766,51 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
           ? readJson<{ programs: TrainingProgram[] }>(response)
           : null,
       ),
-    ]).then(([profilePayload, conversationPayload, programPayload]) => {
-      if (profilePayload?.profile) {
-        setProfile(profilePayload.profile);
-        setProgramForm((current) => ({
-          ...current,
-          goal: profilePayload.profile.primaryGoal,
-          daysPerWeek: profilePayload.profile.daysPerWeek,
-          minutesPerSession: profilePayload.profile.minutesPerSession,
-        }));
-      }
-      if (conversationPayload?.conversations)
-        setConversations(orderConversations(conversationPayload.conversations));
-      if (programPayload?.programs) {
-        setPrograms(programPayload.programs);
-        setActiveProgram(programPayload.programs[0] ?? null);
-      }
-    });
+      fetch('/api/body-weights').then((response) =>
+        response.ok
+          ? readJson<{
+              summary: {
+                average7d: number | null;
+                slopeKgPerWeek: number | null;
+                latest: number | null;
+              };
+            }>(response)
+          : null,
+      ),
+      fetch('/api/training-blocks').then((response) =>
+        response.ok ? readJson<{ blocks: TrainingBlock[] }>(response) : null,
+      ),
+    ]).then(
+      ([
+        profilePayload,
+        conversationPayload,
+        programPayload,
+        bodyWeightPayload,
+        trainingBlockPayload,
+      ]) => {
+        if (profilePayload?.profile) {
+          setProfile(profilePayload.profile);
+          setProgramForm((current) => ({
+            ...current,
+            goal: profilePayload.profile.primaryGoal,
+            daysPerWeek: profilePayload.profile.daysPerWeek,
+            minutesPerSession: profilePayload.profile.minutesPerSession,
+          }));
+        }
+        if (conversationPayload?.conversations)
+          setConversations(
+            orderConversations(conversationPayload.conversations),
+          );
+        if (programPayload?.programs) {
+          setPrograms(programPayload.programs);
+          setActiveProgram(programPayload.programs[0] ?? null);
+        }
+        if (bodyWeightPayload?.summary)
+          setBodyWeightSummary(bodyWeightPayload.summary);
+        if (trainingBlockPayload?.blocks)
+          setTrainingBlocks(trainingBlockPayload.blocks);
+      },
+    );
   }, []);
 
   useEffect(() => {
@@ -956,9 +1026,77 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     );
     if (response.ok) {
       setProfile(payload.profile);
+      if (payload.profile.weightKg != null) {
+        const bodyWeightResponse = await fetch('/api/body-weights', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ weightKg: payload.profile.weightKg }),
+        });
+        if (bodyWeightResponse.ok) {
+          setBodyWeightState('Weight history updated');
+          const bodyWeightPayload = await fetch('/api/body-weights').then(
+            (result) =>
+              readJson<{
+                summary: {
+                  average7d: number | null;
+                  slopeKgPerWeek: number | null;
+                  latest: number | null;
+                };
+              }>(result),
+          );
+          if (bodyWeightPayload.summary)
+            setBodyWeightSummary(bodyWeightPayload.summary);
+          window.setTimeout(() => setBodyWeightState(''), 1800);
+        }
+      }
       setProfileState('Saved');
       window.setTimeout(() => setProfileState('Save athlete profile'), 1600);
     } else setProfileState(payload.error || 'Try again');
+  }
+
+  async function createTrainingBlock(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBlockState('Saving…');
+    try {
+      const response = await fetch('/api/training-blocks', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(blockDraft),
+      });
+      const payload = await readJson<{ block?: TrainingBlock; error?: string }>(
+        response,
+      );
+      if (!response.ok || !payload.block) {
+        throw new Error(payload.error || 'Training block could not be saved.');
+      }
+      setTrainingBlocks((current) => [payload.block!, ...current]);
+      setBlockDraft((current) => ({ ...current, name: '', endsAt: '' }));
+      setBlockState('Saved');
+      window.setTimeout(() => setBlockState(''), 1600);
+    } catch (error) {
+      setBlockState(error instanceof Error ? error.message : 'Try again');
+    }
+  }
+
+  async function removeTrainingBlock(id: string) {
+    setBlockState('Removing…');
+    try {
+      const response = await fetch('/api/training-blocks', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      const payload = await readJson<{ error?: string }>(response);
+      if (!response.ok)
+        throw new Error(payload.error || 'Block could not be deleted.');
+      setTrainingBlocks((current) =>
+        current.filter((block) => block.id !== id),
+      );
+      setBlockState('Removed');
+      window.setTimeout(() => setBlockState(''), 1200);
+    } catch (error) {
+      setBlockState(error instanceof Error ? error.message : 'Try again');
+    }
   }
 
   async function generateProgram(event: SyntheticEvent<HTMLFormElement>) {
@@ -1450,8 +1588,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                   </ResponsiveContainer>
                 </div>
                 <p className="chart-note">
-                  Epley estimate from eligible compound sets of 8 reps or fewer. Use the
-                  direction as a signal, not the decimal as a tested max.
+                  Epley estimate from eligible compound sets of 8 reps or fewer.
+                  Use the direction as a signal, not the decimal as a tested
+                  max.
                 </p>
               </article>
               <article className="pr-panel">
@@ -1942,7 +2081,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     <div className="panel-title-row">
                       <h2>Where the work is going</h2>
                       <InfoTooltip title="Balance signals">
-                        These ratios compare your own four-week direct-set distribution. They are signals to investigate, not universal prescriptions.
+                        These ratios compare your own four-week direct-set
+                        distribution. They are signals to investigate, not
+                        universal prescriptions.
                       </InfoTooltip>
                     </div>
                   </div>
@@ -1980,11 +2121,15 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     <div className="panel-title-row">
                       <h2>Training adherence</h2>
                       <InfoTooltip title="Training adherence">
-                        Actual logged sessions divided by the sessions per week in your athlete profile. Weeks cap at 100% when you train above plan.
+                        Actual logged sessions divided by the sessions per week
+                        in your athlete profile. Weeks cap at 100% when you
+                        train above plan.
                       </InfoTooltip>
                     </div>
                   </div>
-                  <StatusPill tone={data.stats.adherencePct >= 80 ? 'good' : 'warn'}>
+                  <StatusPill
+                    tone={data.stats.adherencePct >= 80 ? 'good' : 'warn'}
+                  >
                     {data.stats.adherencePct}% average
                   </StatusPill>
                 </div>
@@ -2816,6 +2961,297 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
               <div className="form-section">
                 <div>
                   <span>03</span>
+                  <h3>Phase & recovery</h3>
+                </div>
+                <div className="form-grid">
+                  <label>
+                    <span>Training phase</span>
+                    <select
+                      value={profile.phase}
+                      onChange={(event) =>
+                        setProfile({
+                          ...profile,
+                          phase: event.target.value as AthleteProfile['phase'],
+                        })
+                      }
+                    >
+                      <option value="cut">Cut</option>
+                      <option value="maintain">Maintain</option>
+                      <option value="lean_gain">Lean gain</option>
+                      <option value="gain">Gain</option>
+                      <option value="recomp">Recomp</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Phase start</span>
+                    <input
+                      type="date"
+                      value={profile.phaseStartedAt}
+                      onChange={(event) =>
+                        setProfile({
+                          ...profile,
+                          phaseStartedAt: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>
+                      Daily calories <small>optional</small>
+                    </span>
+                    <input
+                      type="number"
+                      min="500"
+                      max="20000"
+                      value={profile.dailyCalories ?? ''}
+                      onChange={(event) =>
+                        setProfile({
+                          ...profile,
+                          dailyCalories: event.target.value
+                            ? Number(event.target.value)
+                            : null,
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>
+                      Protein (g) <small>optional</small>
+                    </span>
+                    <input
+                      type="number"
+                      min="20"
+                      max="500"
+                      value={profile.proteinGrams ?? ''}
+                      onChange={(event) =>
+                        setProfile({
+                          ...profile,
+                          proteinGrams: event.target.value
+                            ? Number(event.target.value)
+                            : null,
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>Typical sleep (hours)</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="24"
+                      step="0.1"
+                      value={profile.sleepHoursTypical ?? ''}
+                      onChange={(event) =>
+                        setProfile({
+                          ...profile,
+                          sleepHoursTypical: event.target.value
+                            ? Number(event.target.value)
+                            : null,
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>Dropset volume weight</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={profile.dropsetWeight}
+                      onChange={(event) =>
+                        setProfile({
+                          ...profile,
+                          dropsetWeight: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>Timezone</span>
+                    <input
+                      value={profile.timezone}
+                      onChange={(event) =>
+                        setProfile({ ...profile, timezone: event.target.value })
+                      }
+                      placeholder="America/Toronto"
+                    />
+                  </label>
+                  <div className="span-two profile-subsection-label">
+                    <span>Smallest practical load increment ({unit})</span>
+                  </div>
+                  {(['barbell', 'dumbbell', 'machine', 'cable'] as const).map(
+                    (equipment) => (
+                      <label key={equipment}>
+                        <span>{equipment}</span>
+                        <input
+                          type="number"
+                          min="0.1"
+                          max="50"
+                          step="0.1"
+                          value={toDisplayWeight(
+                            profile.loadIncrements[equipment],
+                            unit,
+                          )}
+                          onChange={(event) =>
+                            setProfile({
+                              ...profile,
+                              loadIncrements: {
+                                ...profile.loadIncrements,
+                                [equipment]:
+                                  Number(event.target.value) /
+                                  (unit === 'lb' ? 2.20462 : 1),
+                              },
+                            })
+                          }
+                        />
+                      </label>
+                    ),
+                  )}
+                  <div className="span-two profile-context-card">
+                    <div className="profile-context-heading">
+                      <div>
+                        <span className="eyebrow">BODY-WEIGHT TREND</span>
+                        <strong>
+                          Keep phase decisions grounded in the scale.
+                        </strong>
+                      </div>
+                      <span className="profile-context-note">
+                        {bodyWeightSummary.latest == null
+                          ? 'No measurements yet'
+                          : `${formatWeight(bodyWeightSummary.latest, unit)} latest`}
+                      </span>
+                    </div>
+                    <div className="profile-context-stats">
+                      <span>
+                        <strong>
+                          {bodyWeightSummary.average7d == null
+                            ? '—'
+                            : formatWeight(bodyWeightSummary.average7d, unit)}
+                        </strong>
+                        <small>7-day average</small>
+                      </span>
+                      <span>
+                        <strong>
+                          {bodyWeightSummary.slopeKgPerWeek == null
+                            ? '—'
+                            : `${bodyWeightSummary.slopeKgPerWeek > 0 ? '+' : ''}${formatWeight(bodyWeightSummary.slopeKgPerWeek, unit)}`}
+                        </strong>
+                        <small>weekly trend</small>
+                      </span>
+                    </div>
+                  </div>
+                  <div className="span-two profile-context-card">
+                    <div className="profile-context-heading">
+                      <div>
+                        <span className="eyebrow">TRAINING BLOCKS</span>
+                        <strong>
+                          Mark accumulation, intensity, and deload weeks.
+                        </strong>
+                      </div>
+                      {blockState && (
+                        <span className="profile-context-note">
+                          {blockState}
+                        </span>
+                      )}
+                    </div>
+                    <form className="block-form" onSubmit={createTrainingBlock}>
+                      <label>
+                        <span>Block name</span>
+                        <input
+                          value={blockDraft.name}
+                          onChange={(event) =>
+                            setBlockDraft({
+                              ...blockDraft,
+                              name: event.target.value,
+                            })
+                          }
+                          placeholder="e.g. Upper/lower accumulation"
+                          required
+                        />
+                      </label>
+                      <label>
+                        <span>Type</span>
+                        <select
+                          value={blockDraft.kind}
+                          onChange={(event) =>
+                            setBlockDraft({
+                              ...blockDraft,
+                              kind: event.target.value as TrainingBlockKind,
+                            })
+                          }
+                        >
+                          <option value="accumulation">Accumulation</option>
+                          <option value="intensification">
+                            Intensification
+                          </option>
+                          <option value="deload">Deload</option>
+                          <option value="maintenance">Maintenance</option>
+                          <option value="custom">Custom</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>Starts</span>
+                        <input
+                          type="date"
+                          value={blockDraft.startsAt}
+                          onChange={(event) =>
+                            setBlockDraft({
+                              ...blockDraft,
+                              startsAt: event.target.value,
+                            })
+                          }
+                          required
+                        />
+                      </label>
+                      <label>
+                        <span>
+                          Ends <small>optional</small>
+                        </span>
+                        <input
+                          type="date"
+                          value={blockDraft.endsAt}
+                          onChange={(event) =>
+                            setBlockDraft({
+                              ...blockDraft,
+                              endsAt: event.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      <Button type="submit">Add block</Button>
+                    </form>
+                    {trainingBlocks.length > 0 && (
+                      <div className="block-list">
+                        {trainingBlocks.slice(0, 6).map((block) => (
+                          <div className="block-row" key={block.id}>
+                            <div>
+                              <strong>{block.name}</strong>
+                              <small>
+                                {block.kind} · {formatShortDate(block.startsAt)}
+                                {block.endsAt
+                                  ? ` → ${formatShortDate(block.endsAt)}`
+                                  : ' → open'}
+                              </small>
+                            </div>
+                            <button
+                              type="button"
+                              className="icon-button"
+                              aria-label={`Delete ${block.name}`}
+                              onClick={() => void removeTrainingBlock(block.id)}
+                            >
+                              <Trash2 aria-hidden="true" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="form-section">
+                <div>
+                  <span>04</span>
                   <h3>Constraints</h3>
                 </div>
                 <div className="form-grid">
@@ -2851,6 +3287,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
               </div>
               <div className="form-actions">
                 <Button type="submit">{profileState}</Button>
+                {bodyWeightState && <span>{bodyWeightState}</span>}
                 <span>Stored in your private Hevy Coach workspace.</span>
               </div>
             </form>

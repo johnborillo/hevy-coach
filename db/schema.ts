@@ -14,7 +14,7 @@ export const athleteProfiles = sqliteTable('athlete_profiles', {
   biologicalSex: text('biological_sex').notNull().default('prefer_not_to_say'),
   age: integer('age'),
   heightCm: integer('height_cm'),
-  weightKg: integer('weight_kg'),
+  weightKg: real('weight_kg'),
   weightUnit: text('weight_unit').notNull().default('lb'),
   heightUnit: text('height_unit').notNull().default('imperial'),
   experience: text('experience').notNull().default('intermediate'),
@@ -27,6 +27,16 @@ export const athleteProfiles = sqliteTable('athlete_profiles', {
   equipment: text('equipment').notNull().default('Full gym'),
   limitations: text('limitations').notNull().default(''),
   preferences: text('preferences').notNull().default(''),
+  phase: text('phase').notNull().default('maintain'),
+  phaseStartedAt: text('phase_started_at'),
+  dailyCalories: integer('daily_calories'),
+  proteinGrams: integer('protein_grams'),
+  sleepHoursTypical: real('sleep_hours_typical'),
+  dropsetWeight: real('dropset_weight').notNull().default(0.5),
+  loadIncrementsJson: text('load_increments_json')
+    .notNull()
+    .default('{"barbell":2.5,"dumbbell":2,"machine":5,"cable":2.5}'),
+  timezone: text('timezone').notNull().default('UTC'),
   updatedAt: text('updated_at').notNull(),
 });
 
@@ -245,10 +255,37 @@ export const personalRecords = sqliteTable(
     createdAt: text('created_at').notNull(),
   },
   (table) => [
-    index('idx_personal_records_user_date').on(
-      table.userId,
-      table.performedAt,
-    ),
+    index('idx_personal_records_user_date').on(table.userId, table.performedAt),
     index('idx_personal_records_user_key').on(table.userId, table.key),
+  ],
+);
+
+export const bodyWeights = sqliteTable(
+  'body_weights',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    measuredAt: text('measured_at').notNull(),
+    weightKg: real('weight_kg').notNull(),
+    source: text('source').notNull().default('manual'),
+  },
+  (table) => [
+    index('idx_body_weights_user_date').on(table.userId, table.measuredAt),
+  ],
+);
+
+export const trainingBlocks = sqliteTable(
+  'training_blocks',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    name: text('name').notNull(),
+    kind: text('kind').notNull(),
+    startsAt: text('starts_at').notNull(),
+    endsAt: text('ends_at'),
+    programId: text('program_id'),
+  },
+  (table) => [
+    index('idx_training_blocks_user_start').on(table.userId, table.startsAt),
   ],
 );
