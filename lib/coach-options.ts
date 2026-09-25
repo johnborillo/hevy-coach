@@ -4,20 +4,8 @@ export const COACH_MODELS = [
     label: 'GLM 5.3 Flash',
   },
   {
-    id: 'deepseek/deepseek-v4-flash-0731',
-    label: 'DeepSeek V4 Flash',
-  },
-  {
-    id: 'deepseek/deepseek-v4.1-flash',
-    label: 'DeepSeek V4.1 Flash',
-  },
-  {
     id: 'openai/gpt-6-luna',
     label: 'GPT-6 Luna',
-  },
-  {
-    id: 'openai/gpt-oss-120b:free',
-    label: 'GPT-OSS 120B (free)',
   },
 ] as const;
 
@@ -29,22 +17,6 @@ export const COACHES = [
     specialty: 'Strength & physique',
     description:
       'A balanced, evidence-led coach for strength, muscle, and sustainable programming.',
-  },
-  {
-    id: 'mira',
-    name: 'Mira',
-    initials: 'M',
-    specialty: 'Hypertrophy & recovery',
-    description:
-      'Focuses on productive volume, exercise stimulus, fatigue, nutrition, and adherence.',
-  },
-  {
-    id: 'atlas',
-    name: 'Atlas',
-    initials: 'A',
-    specialty: 'Strength & performance',
-    description:
-      'Focuses on lift skill, specificity, readiness, and practical performance progression.',
   },
 ] as const;
 
@@ -64,21 +36,41 @@ export function isCoachId(value: unknown): value is CoachId {
 
 const MESSAGE_METADATA_PREFIX = '@hevy-coach:';
 
-export function encodeCoachMessageMetadata(coachId: CoachId, model: string) {
-  return `${MESSAGE_METADATA_PREFIX}${coachId}|${model}`;
+export function encodeCoachMessageMetadata(
+  coachId: CoachId,
+  model: string,
+  fallbackReason?: string | null,
+) {
+  const reason = fallbackReason
+    ? `|${encodeURIComponent(fallbackReason.slice(0, 600))}`
+    : '';
+  return `${MESSAGE_METADATA_PREFIX}${coachId}|${model}${reason}`;
 }
 
 export function decodeCoachMessageMetadata(value: string | null) {
   if (!value?.startsWith(MESSAGE_METADATA_PREFIX)) {
-    return { coachId: DEFAULT_COACH_ID, model: value };
+    return { coachId: DEFAULT_COACH_ID, model: value, fallbackReason: null };
   }
   const separator = value.indexOf('|', MESSAGE_METADATA_PREFIX.length);
   if (separator < 0) {
-    return { coachId: DEFAULT_COACH_ID, model: value };
+    return { coachId: DEFAULT_COACH_ID, model: value, fallbackReason: null };
   }
   const coachId = value.slice(MESSAGE_METADATA_PREFIX.length, separator);
+  const encodedModel = value.slice(separator + 1);
+  const modelSeparator = encodedModel.indexOf('|');
+  const model = modelSeparator < 0 ? encodedModel : encodedModel.slice(0, modelSeparator);
+  const encodedReason = modelSeparator < 0 ? '' : encodedModel.slice(modelSeparator + 1);
+  let fallbackReason: string | null = null;
+  if (encodedReason) {
+    try {
+      fallbackReason = decodeURIComponent(encodedReason);
+    } catch {
+      fallbackReason = encodedReason;
+    }
+  }
   return {
     coachId: isCoachId(coachId) ? coachId : DEFAULT_COACH_ID,
-    model: value.slice(separator + 1) || null,
+    model: model || null,
+    fallbackReason,
   };
 }

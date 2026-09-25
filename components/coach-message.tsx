@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CalendarDays, ChevronRight, Database, X } from "lucide-react";
+import { AlertTriangle, CalendarDays, ChevronRight, Database, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -364,7 +364,7 @@ export function CoachSourcePanel({ source, data, unit, onOpenWorkout, onClose }:
   );
 }
 
-export function CoachMessage({ content, animate = false, activeSource, onSourceChange, onComplete }: { content: string; animate?: boolean; activeSource: CoachSource | null; onSourceChange: (source: CoachSource | null) => void; onComplete?: () => void }) {
+export function CoachMessage({ content, fallbackReason, animate = false, activeSource, onSourceChange, onComplete }: { content: string; fallbackReason?: string | null; animate?: boolean; activeSource: CoachSource | null; onSourceChange: (source: CoachSource | null) => void; onComplete?: () => void }) {
   const [visible, setVisible] = useState(animate ? "" : content);
 
   useEffect(() => {
@@ -419,6 +419,15 @@ export function CoachMessage({ content, animate = false, activeSource, onSourceC
         {renderedContent}
       </ReactMarkdown>
       {revealing && <span className="response-cursor" aria-hidden="true" />}
+      {fallbackReason && !revealing && (
+        <details className="coach-fallback-details">
+          <summary>
+            <AlertTriangle />
+            <span>AI unavailable — show why</span>
+          </summary>
+          <p>{fallbackReason}</p>
+        </details>
+      )}
     </div>
   );
 }

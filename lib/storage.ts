@@ -63,6 +63,7 @@ export type ChatMessage = {
   content: string;
   model: string | null;
   coachId?: CoachId | null;
+  fallbackReason?: string | null;
   createdAt: string;
 };
 
@@ -394,6 +395,7 @@ export async function listMessages(userId: string, conversationId: string) {
       content: row.content,
       model: metadata.model,
       coachId: row.role === 'assistant' ? metadata.coachId : null,
+      fallbackReason: row.role === 'assistant' ? metadata.fallbackReason : null,
       createdAt: row.created_at,
     };
   }) satisfies ChatMessage[];
@@ -406,13 +408,14 @@ export async function saveMessage(
   content: string,
   model: string | null = null,
   coachId: CoachId | null = null,
+  fallbackReason: string | null = null,
 ) {
   const database = getDatabase();
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const storedModel =
     role === 'assistant' && model && coachId
-      ? encodeCoachMessageMetadata(coachId, model)
+      ? encodeCoachMessageMetadata(coachId, model, fallbackReason)
       : model;
   await database.batch([
     database
@@ -441,6 +444,7 @@ export async function saveMessage(
     content,
     model,
     coachId,
+    fallbackReason,
     createdAt: now,
   } satisfies ChatMessage;
 }

@@ -73,7 +73,6 @@ import {
   COACH_MODELS,
   DEFAULT_COACH_ID,
   DEFAULT_COACH_MODEL,
-  isCoachId,
   isCoachModelId,
   type CoachId,
   type CoachModelId,
@@ -480,8 +479,6 @@ function EmptyMessage({ title, body }: { title: string; body: string }) {
 
 export function TrainingDashboard({ data }: { data: DashboardData }) {
   const [view, setView] = useState<View>('today');
-  const [selectedCoachId, setSelectedCoachId] =
-    useState<CoachId>(DEFAULT_COACH_ID);
   const [selectedCoachModel, setSelectedCoachModel] =
     useState<CoachModelId>(DEFAULT_COACH_MODEL);
   const [reviewExpanded, setReviewExpanded] = useState(false);
@@ -578,17 +575,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   const sourceCloseTimer = useRef<number | null>(null);
   const unit = profile.weightUnit;
   const profileHeight = imperialHeight(profile.heightCm);
-  const selectedCoach =
-    COACHES.find((coach) => coach.id === selectedCoachId) ?? COACHES[0];
-
-  function chooseCoach(coachId: CoachId) {
-    setSelectedCoachId(coachId);
-    try {
-      window.localStorage.setItem('hevy-coach.persona', coachId);
-    } catch {
-      // The choice still works for this session when storage is unavailable.
-    }
-  }
+  const selectedCoach = COACHES[0];
 
   function chooseCoachModel(model: CoachModelId) {
     setSelectedCoachModel(model);
@@ -872,9 +859,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       try {
-        const savedCoach = window.localStorage.getItem('hevy-coach.persona');
         const savedModel = window.localStorage.getItem('hevy-coach.model');
-        if (isCoachId(savedCoach)) setSelectedCoachId(savedCoach);
         if (isCoachModelId(savedModel)) setSelectedCoachModel(savedModel);
       } catch {
         // Defaults remain available when browser storage is blocked.
@@ -1155,7 +1140,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
         body: JSON.stringify({
           conversationId: resolvedConversationId,
           message: content,
-          coachId: selectedCoachId,
+          coachId: DEFAULT_COACH_ID,
           model: selectedCoachModel,
         }),
       });
@@ -2529,23 +2514,6 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
               </Button>
               <div className="coach-preferences">
                 <label>
-                  <span>Coach</span>
-                  <select
-                    value={selectedCoachId}
-                    onChange={(event) => {
-                      if (isCoachId(event.target.value)) {
-                        chooseCoach(event.target.value);
-                      }
-                    }}
-                  >
-                    {COACHES.map((coach) => (
-                      <option key={coach.id} value={coach.id}>
-                        {coach.name} — {coach.specialty}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
                   <span>OpenRouter model</span>
                   <select
                     value={selectedCoachModel}
@@ -2647,6 +2615,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                         {message.role === 'assistant' ? (
                           <CoachMessage
                             content={message.content}
+                            fallbackReason={message.fallbackReason}
                             animate={message.id === animatingMessageId}
                             activeSource={coachSource}
                             onSourceChange={changeCoachSource}

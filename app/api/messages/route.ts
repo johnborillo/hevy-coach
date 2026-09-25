@@ -116,7 +116,12 @@ export async function POST(request: Request) {
       getDashboardData(userId),
       listMessages(userId, conversationId),
     ]);
-    let answer: { content: string; model: string; coachId: typeof coachId };
+    let answer: {
+      content: string;
+      model: string;
+      coachId: typeof coachId;
+      fallbackReason?: string | null;
+    };
     try {
       answer = (await askCoach(userId, profile, dashboard, history, {
         model: isCoachModelId(body.model) ? body.model : undefined,
@@ -125,6 +130,8 @@ export async function POST(request: Request) {
         content: fallbackAnswer(content, dashboard),
         model: 'evidence-engine',
         coachId,
+        fallbackReason:
+          'The OpenRouter API key is not configured for this deployment.',
       };
     } catch (error) {
       console.error('Coach AI failed after retrying', {
@@ -135,6 +142,10 @@ export async function POST(request: Request) {
         content: `${fallbackAnswer(content, dashboard)}\n\n*The AI provider was unavailable after retrying, so this answer uses only the verified training signals calculated from your Hevy history.*`,
         model: 'evidence-engine',
         coachId,
+        fallbackReason:
+          error instanceof Error && error.message
+            ? error.message.replace(/\s+/g, ' ').trim().slice(0, 600)
+            : 'The AI provider did not return a usable response after retrying.',
       };
     }
     const assistantMessage = await saveMessage(
@@ -144,6 +155,7 @@ export async function POST(request: Request) {
       answer.content,
       answer.model,
       answer.coachId,
+      answer.fallbackReason,
     );
     return Response.json({ userMessage, assistantMessage });
   } catch {

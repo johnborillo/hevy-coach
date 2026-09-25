@@ -278,6 +278,11 @@ td small { color: #838b7f; font-size: 0.7rem; }
 .message-markdown pre { overflow-x: auto; padding: 14px; border: 1px solid rgb(255 255 255 / 10%); border-radius: 10px; background: #090c08; }
 .message-markdown pre code { padding: 0; background: transparent; color: #e5eadf; }
 .message-markdown a { color: var(--signal); text-decoration: underline; text-underline-offset: 3px; }
+.coach-fallback-details { width: fit-content; max-width: min(100%, 640px); margin-top: 14px; border: 1px solid rgb(255 190 90 / 28%); border-radius: 10px; background: rgb(255 190 90 / 7%); color: #c7cec3; font-size: 0.76rem; }
+.coach-fallback-details summary { display: flex; align-items: center; gap: 7px; padding: 8px 10px; color: #ffd18a; font-family: var(--font-geist-mono); font-size: 0.66rem; font-weight: 750; cursor: pointer; list-style: none; }
+.coach-fallback-details summary::-webkit-details-marker { display: none; }
+.coach-fallback-details summary svg { width: 14px; height: 14px; flex: none; }
+.coach-fallback-details p { margin: 0; padding: 0 10px 10px; color: #c7cec3; font-size: 0.72rem; line-height: 1.5; overflow-wrap: anywhere; }
 .message-markdown .coach-source-chip { display: inline-flex; min-height: 26px; align-items: center; gap: 5px; margin: 2px 1px; padding: 3px 8px; border: 1px solid rgb(184 237 74 / 28%); border-radius: 999px; background: rgb(184 237 74 / 10%); color: #d9ff8e; font: inherit; font-family: var(--font-geist-mono); font-size: 0.68rem; line-height: 1.2; text-align: left; vertical-align: middle; cursor: pointer; }
 .message-markdown .coach-source-chip:hover,
 .message-markdown .coach-source-chip[aria-expanded='true'] { border-color: rgb(184 237 74 / 60%); background: rgb(184 237 74 / 18%); color: white; }
