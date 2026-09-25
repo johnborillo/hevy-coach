@@ -139,7 +139,7 @@ export async function POST(request: Request) {
         message: error instanceof Error ? error.message : 'unknown',
       });
       answer = {
-        content: `${fallbackAnswer(content, dashboard)}\n\n*The AI provider was unavailable after retrying, so this answer uses only the verified training signals calculated from your Hevy history.*`,
+        content: fallbackAnswer(content, dashboard),
         model: 'evidence-engine',
         coachId,
         fallbackReason:

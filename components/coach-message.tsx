@@ -423,7 +423,7 @@ export function CoachMessage({ content, fallbackReason, animate = false, activeS
         <details className="coach-fallback-details">
           <summary>
             <AlertTriangle />
-            <span>AI unavailable — show why</span>
+            <span>Evidence engine used — show why</span>
           </summary>
           <p>{fallbackReason}</p>
         </details>
