@@ -1,4 +1,9 @@
 import { getDatabase } from '@/db';
+import {
+  decodeCoachMessageMetadata,
+  encodeCoachMessageMetadata,
+  type CoachId,
+} from './coach-options';
 import { migrateProgramContent } from './program-v2';
 
 export type WeightUnit = 'kg' | 'lb';
@@ -57,6 +62,7 @@ export type ChatMessage = {
   role: 'user' | 'assistant';
   content: string;
   model: string | null;
+  coachId?: CoachId | null;
   createdAt: string;
 };
 
@@ -66,11 +72,7 @@ export type ProgramEffort = {
 };
 
 export type ProgramProgression = {
-  rule:
-    | 'double_progression'
-    | 'linear_load'
-    | 'rep_target_then_load'
-    | 'hold';
+  rule: 'double_progression' | 'linear_load' | 'rep_target_then_load' | 'hold';
   loadIncrementKg: number;
   triggerReps?: number;
 };
@@ -383,14 +385,18 @@ export async function listMessages(userId: string, conversationId: string) {
       model: string | null;
       created_at: string;
     }>();
-  return result.results.map((row) => ({
-    id: row.id,
-    conversationId: row.conversation_id,
-    role: row.role,
-    content: row.content,
-    model: row.model,
-    createdAt: row.created_at,
-  })) satisfies ChatMessage[];
+  return result.results.map((row) => {
+    const metadata = decodeCoachMessageMetadata(row.model);
+    return {
+      id: row.id,
+      conversationId: row.conversation_id,
+      role: row.role,
+      content: row.content,
+      model: metadata.model,
+      coachId: row.role === 'assistant' ? metadata.coachId : null,
+      createdAt: row.created_at,
+    };
+  }) satisfies ChatMessage[];
 }
 
 export async function saveMessage(
@@ -399,16 +405,21 @@ export async function saveMessage(
   role: 'user' | 'assistant',
   content: string,
   model: string | null = null,
+  coachId: CoachId | null = null,
 ) {
   const database = getDatabase();
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
+  const storedModel =
+    role === 'assistant' && model && coachId
+      ? encodeCoachMessageMetadata(coachId, model)
+      : model;
   await database.batch([
     database
       .prepare(
         'INSERT INTO messages (id, conversation_id, user_id, role, content, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
       )
-      .bind(id, conversationId, userId, role, content, model, now),
+      .bind(id, conversationId, userId, role, content, storedModel, now),
     database
       .prepare(
         'UPDATE conversations SET updated_at = ?, title = CASE WHEN title = ? AND ? = ? THEN ? ELSE title END WHERE id = ? AND user_id = ?',
@@ -429,6 +440,7 @@ export async function saveMessage(
     role,
     content,
     model,
+    coachId,
     createdAt: now,
   } satisfies ChatMessage;
 }

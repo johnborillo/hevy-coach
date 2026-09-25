@@ -1,19 +1,28 @@
 import type { DashboardData } from './hevy';
-import type {
-  AthleteProfile,
-  ChatMessage,
-  TrainingProgram,
-} from './storage';
+import type { AthleteProfile, ChatMessage, TrainingProgram } from './storage';
+import {
+  DEFAULT_COACH_ID,
+  DEFAULT_COACH_MODEL,
+  type CoachId,
+  type CoachModelId,
+} from './coach-options';
 import { buildCoachContext, SUMMARY_FIELDS } from './coach-context';
-import { buildProgramContext, programGenerationPrompt } from './program-generate';
-
-const DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
+import {
+  buildProgramContext,
+  programGenerationPrompt,
+} from './program-generate';
 
 const SUMMARY_CITATION_GUIDE = SUMMARY_FIELDS.map(
   (field) => `[Hevy summary: ${field}]`,
 ).join(', ');
 
-const COACH_PERSONA = `You are Rowan, a highly experienced strength and physique coach who has trained recreational lifters and competitive athletes for more than 15 years. You are thoughtful, warm, lucid, and evidence-led. You care about adherence, progressive overload, fatigue management, technique quality, and the athlete's actual constraints.
+const COACH_INTROS: Record<CoachId, string> = {
+  rowan: `You are Rowan, a highly experienced strength and physique coach. You take a balanced view of strength, muscle gain, fatigue, technique, and the athlete's real-life constraints. Your style is thoughtful, warm, nuanced, and evidence-led.`,
+  mira: `You are Mira, a highly experienced resistance-training coach who specializes in hypertrophy and recovery. You pay particular attention to productive volume, exercise stimulus, fatigue, nutrition and sleep context, and long-term adherence. Your style is encouraging, perceptive, practical, and evidence-led. You can still coach strength, conditioning, technique, and general training whenever those are the athlete's priority.`,
+  atlas: `You are Atlas, a highly experienced strength and performance coach. You pay particular attention to lift skill, specificity, readiness, top-set and back-off structure, athletic carryover, and conservative load progression. Your style is direct, calm, precise, and evidence-led. You can still coach hypertrophy, recovery, conditioning, and general training whenever those are the athlete's priority.`,
+};
+
+const COACH_RULES = `All coaches in this workspace can help with resistance training, strength training, hypertrophy, conditioning, exercise technique, recovery, and general training decisions. Let your specialty shape emphasis, not restrict the help you can provide.
 
 Voice and structure:
 - Write like a perceptive coach having a real conversation: calm, collaborative, nuanced, and candid.
@@ -37,6 +46,10 @@ Rules:
 - Treat estimated 1RM as a trend signal, not a true max.
 - Do not diagnose pain or medical conditions. Recommend qualified care for persistent or concerning symptoms.
 - Never claim a workout or routine was written to Hevy. Drafts require athlete approval.`;
+
+function coachPrompt(coachId: CoachId) {
+  return `${COACH_INTROS[coachId]}\n\n${COACH_RULES}`;
+}
 
 type OpenRouterMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -238,18 +251,18 @@ function numberTokens(value: string) {
   }));
 }
 
-export function validateGroundedNumbers(
-  content: string,
-  evidenceText: string,
-) {
+export function validateGroundedNumbers(content: string, evidenceText: string) {
   const evidenceNumbers = numberTokens(evidenceText).map((item) => item.value);
   const allowed = new Set(evidenceNumbers);
-  const historicalYear = /\b(?:on|logged|you did|session on|workout on)\s+(?:[^\d]{0,18})20\d{2}\b/i;
+  const historicalYear =
+    /\b(?:on|logged|you did|session on|workout on)\s+(?:[^\d]{0,18})20\d{2}\b/i;
   const computedPercentages = new Set<number>();
   for (const numerator of evidenceNumbers) {
     for (const denominator of evidenceNumbers) {
       if (!denominator) continue;
-      computedPercentages.add(Math.round((numerator / denominator) * 1000) / 10);
+      computedPercentages.add(
+        Math.round((numerator / denominator) * 1000) / 10,
+      );
       computedPercentages.add(
         Math.round(((numerator - denominator) / denominator) * 1000) / 10,
       );
@@ -368,10 +381,12 @@ export function validateCoachEvidence(
     .join(' ');
   for (const lift of ['squat', 'deadlift']) {
     if (knownExerciseText.includes(lift)) continue;
-    const unsupportedLift = new RegExp(
-      `\\b(?:your|the)\\s+(?:barbell\\s+)?${lift}\\s+(?:is|was|has|had|numbers?|progress|stalled|regressing|increased|decreased|moved|went)\\b`,
-      'i',
-    ).test(content) || new RegExp(`\\byou\\s+(?:squatted|deadlifted)\\b`, 'i').test(content);
+    const unsupportedLift =
+      new RegExp(
+        `\\b(?:your|the)\\s+(?:barbell\\s+)?${lift}\\s+(?:is|was|has|had|numbers?|progress|stalled|regressing|increased|decreased|moved|went)\\b`,
+        'i',
+      ).test(content) ||
+      new RegExp(`\\byou\\s+(?:squatted|deadlifted)\\b`, 'i').test(content);
     if (unsupportedLift) {
       throw new EvidenceMismatchError(
         `The draft treated ${lift} as a logged lift, but no ${lift} exercise exists in the synchronized Hevy log.`,
@@ -386,11 +401,17 @@ export async function askCoach(
   profile: AthleteProfile,
   dashboard: DashboardData,
   history: ChatMessage[],
+  options: {
+    model?: CoachModelId;
+    coachId?: CoachId;
+  } = {},
 ) {
+  const coachId = options.coachId ?? DEFAULT_COACH_ID;
   const model =
+    options.model ||
     process.env.OPENROUTER_MODEL_CHAT ||
     process.env.OPENROUTER_MODEL ||
-    DEFAULT_MODEL;
+    DEFAULT_COACH_MODEL;
   const historyMessages: OpenRouterMessage[] = history
     .slice(-12)
     .map((message) => ({
@@ -417,7 +438,7 @@ export async function askCoach(
       noteResults,
     });
     const baseMessages: OpenRouterMessage[] = [
-      { role: 'system', content: COACH_PERSONA },
+      { role: 'system', content: coachPrompt(coachId) },
       {
         role: 'system',
         content: `Current private training context (retrieved workouts are the only source for exact workout claims; estimated prompt size ${coachContext.estimatedTokens} tokens):\n${coachContext.text}`,
@@ -469,8 +490,12 @@ export async function askCoach(
         `${coachContext.text}\n${recentConversationGrounding}`,
       );
       return {
-        content: content.replace(/\[NEED:\s*workout\s+20\d{2}-\d{2}-\d{2}\]/gi, ''),
+        content: content.replace(
+          /\[NEED:\s*workout\s+20\d{2}-\d{2}-\d{2}\]/gi,
+          '',
+        ),
         model: payload.model ?? model,
+        coachId,
       };
     } catch (error) {
       if (!(error instanceof EvidenceMismatchError)) throw error;
@@ -479,6 +504,7 @@ export async function askCoach(
         return {
           content: `${lastDraft}\n\n*Some figures in this answer could not be verified against your synchronized Hevy log.*`,
           model: payload.model ?? model,
+          coachId,
         };
       }
       console.warn(
@@ -490,6 +516,7 @@ export async function askCoach(
   return {
     content: `${lastDraft}\n\n*Some figures in this answer could not be verified against your synchronized Hevy log.*`,
     model,
+    coachId,
   };
 }
 
@@ -508,7 +535,7 @@ export async function generateProgramWithCoach(
   const model =
     process.env.OPENROUTER_MODEL_PROGRAM ||
     process.env.OPENROUTER_MODEL ||
-    DEFAULT_MODEL;
+    DEFAULT_COACH_MODEL;
   const payload = await requestCompletion(
     {
       model,
@@ -518,10 +545,13 @@ export async function generateProgramWithCoach(
       response_format: { type: 'json_object' },
       provider: { data_collection: 'deny', allow_fallbacks: true },
       messages: [
-        { role: 'system', content: COACH_PERSONA },
+        { role: 'system', content: coachPrompt(DEFAULT_COACH_ID) },
         {
           role: 'user',
-          content: programGenerationPrompt(request, buildProgramContext(profile, dashboard, currentProgram)),
+          content: programGenerationPrompt(
+            request,
+            buildProgramContext(profile, dashboard, currentProgram),
+          ),
         },
       ],
     },
@@ -542,7 +572,7 @@ export async function adjustProgramWithCoach(
   const model =
     process.env.OPENROUTER_MODEL_PROGRAM ||
     process.env.OPENROUTER_MODEL ||
-    DEFAULT_MODEL;
+    DEFAULT_COACH_MODEL;
   const payload = await requestCompletion(
     {
       model,
@@ -554,7 +584,7 @@ export async function adjustProgramWithCoach(
       messages: [
         {
           role: 'system',
-          content: `${COACH_PERSONA}\n\nFor this request, act as a careful program editor. Return only one valid JSON object using the exact program schema. Return the complete replacement program, not a patch or commentary. Preserve the program's duration, days, and session length unless the athlete explicitly asks to change them.`,
+          content: `${coachPrompt(DEFAULT_COACH_ID)}\n\nFor this request, act as a careful program editor. Return only one valid JSON object using the exact program schema. Return the complete replacement program, not a patch or commentary. Preserve the program's duration, days, and session length unless the athlete explicitly asks to change them.`,
         },
         {
           role: 'user',

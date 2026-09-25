@@ -48,6 +48,8 @@
 .review-sections p { margin: 8px 0 0 25px; color: #d9ded5; font-size: 0.84rem; line-height: 1.5; }
 .review-summary-line { margin-top: 20px; padding-top: 13px; border-top: 1px solid rgb(255 255 255 / 12%); color: #aeb7a8; font-family: var(--font-geist-mono); font-size: 0.68rem; }
 .review-carried-over { display: block; margin: 11px 0 0 25px; color: #aeb7a8; font-size: 0.72rem; }
+.review-toggle { margin-top: 18px; padding: 7px 10px; border: 1px solid rgb(184 237 74 / 28%); border-radius: 9px; background: rgb(184 237 74 / 8%); color: var(--signal); font-family: var(--font-geist-mono); font-size: 0.68rem; font-weight: 700; cursor: pointer; }
+.review-toggle:hover { border-color: rgb(184 237 74 / 55%); background: rgb(184 237 74 / 13%); }
 .review-label { display: flex; align-items: center; gap: 7px; color: var(--signal); font-family: var(--font-geist-mono); font-size: 0.72rem; font-weight: 750; letter-spacing: 0.06em; text-transform: uppercase; }
 .review-label svg { width: 16px; }
 .review-label.warn { color: #ffc56b; }
@@ -187,6 +189,11 @@ td small { color: #838b7f; font-size: 0.7rem; }
 .chat-sidebar { display: flex; min-height: 0; flex-direction: column; padding: 14px; border-right: 1px solid rgb(255 255 255 / 10%); background: #0c100b; }
 .new-chat { width: 100%; justify-content: flex-start; background: var(--signal); color: #172000; }
 .new-chat:hover { background: #c7f36e; }
+.coach-preferences { display: grid; gap: 10px; margin-top: 14px; padding: 12px; border: 1px solid rgb(255 255 255 / 10%); border-radius: 12px; background: rgb(255 255 255 / 4%); }
+.coach-preferences label { display: grid; gap: 5px; }
+.coach-preferences label > span { color: #8d9688; font-family: var(--font-geist-mono); font-size: 0.61rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+.coach-preferences select { width: 100%; min-width: 0; height: 34px; padding: 0 28px 0 9px; border: 1px solid rgb(255 255 255 / 12%); border-radius: 8px; background: #171d15; color: #edf1e9; font: inherit; font-size: 0.7rem; }
+.coach-preferences > small { overflow: hidden; color: #7f887b; font-size: 0.65rem; line-height: 1.45; }
 .chat-history-label { margin: 24px 8px 8px; color: #7f887b; font-family: var(--font-geist-mono); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .conversation-list { min-height: 0; flex: 1; overflow-y: auto; }
 .conversation-row { display: grid; grid-template-columns: minmax(0, 1fr) 60px; align-items: center; border-radius: 10px; }
@@ -410,6 +417,12 @@ td small { color: #838b7f; font-size: 0.7rem; }
 .profile-form label { display: grid; gap: 6px; }
 .program-builder label > span,
 .profile-form label > span { color: #626b5e; font-size: 0.76rem; font-weight: 650; }
+.profile-form label > .form-label-with-help,
+.profile-subsection-label .form-label-with-help { display: flex; align-items: center; gap: 5px; }
+.profile-form .form-label-with-help .info-tooltip-trigger,
+.profile-subsection-label .info-tooltip-trigger { width: 20px; height: 20px; }
+.profile-form .form-label-with-help .info-tooltip-trigger svg,
+.profile-subsection-label .info-tooltip-trigger svg { width: 14px; height: 14px; }
 .profile-field { display: grid; gap: 6px; }
 .profile-field > span { color: #626b5e; font-size: 0.76rem; font-weight: 650; }
 .height-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }

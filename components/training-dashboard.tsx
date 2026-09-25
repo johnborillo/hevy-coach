@@ -68,6 +68,16 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { DashboardData, MuscleWindow } from '@/lib/hevy';
+import {
+  COACHES,
+  COACH_MODELS,
+  DEFAULT_COACH_ID,
+  DEFAULT_COACH_MODEL,
+  isCoachId,
+  isCoachModelId,
+  type CoachId,
+  type CoachModelId,
+} from '@/lib/coach-options';
 import { MUSCLES, muscleLabel, type Muscle } from '@/lib/muscles';
 import { formatEffort, formatRepRange } from '@/lib/program-v2';
 import type {
@@ -173,6 +183,10 @@ function browserTimeZone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 }
 
+function coachFor(coachId?: CoachId | null) {
+  return COACHES.find((coach) => coach.id === coachId) ?? COACHES[0];
+}
+
 const PROGRESS_HELP = {
   workingSets:
     'Working and failure sets logged in the most recent 7 days. Warm-ups are excluded and dropsets count as half a set so the total better reflects training stimulus.',
@@ -190,6 +204,29 @@ const PROGRESS_HELP = {
     'Working sets are assigned to a detailed muscle map. Primary muscles count as direct sets; secondary muscles count as half an indirect set. Zero-volume muscles stay visible, and the comparison uses the preceding window of the same length.',
   exercisePerformance:
     'A movement-by-movement summary of your synchronized Hevy history: sessions, non-warm-up sets, load-volume, best e1RM, and e1RM change across up to six recent comparable sessions.',
+  variationSlots:
+    'A variation slot joins movements that train the same muscle with the same movement pattern, such as barbell, dumbbell, and machine presses. Use one when you intentionally rotate comparable exercises and want one progression and PR history. Do not group movements with different target muscles or patterns. Suggested groupings are a starting point—review the exercises before selecting Group.',
+  balanceSignals:
+    'Each ratio badge reads your 4-week average direct sets as “first group ÷ second group · reference range.” For example, 1 · 0.7–1.4 means equal push and pull work, within the reference range. A one-sided range such as 1.4 · 0.5+ means the ratio is 1.4 and the minimum reference is 0.5. “No data” means the second group has no sets, so a ratio cannot be calculated; “0 sets” means none were logged for that muscle. Use these as prompts to review your program, not mandatory targets.',
+};
+
+const PROFILE_HELP = {
+  phase:
+    'Your current nutrition and training context. Cut means losing weight, maintain means holding weight, lean gain or gain means intentionally gaining, and recomp means aiming to add muscle while body weight stays roughly stable.',
+  phaseStart:
+    'The date this phase began. It helps the coach compare body-weight and training trends over the correct time period.',
+  calories:
+    'Your usual daily calorie target. Optional; it gives nutrition context but is not treated as a perfectly measured intake.',
+  protein:
+    'Your usual daily protein target in grams. Optional; it helps the coach put recovery and muscle-gain advice in context.',
+  sleep:
+    'Your typical nightly sleep, not a one-night score. The coach uses it as recovery context when interpreting fatigue and performance.',
+  dropsetWeight:
+    'How much one dropset counts toward training volume. The default 0.5 means two dropsets count like one standard working set in volume summaries.',
+  timezone:
+    'Used to place workouts, weeks, phase dates, and reviews on your local calendar.',
+  loadIncrement:
+    'The smallest weight increase you can realistically make on each equipment type. For example, enter 5 lb if the next available barbell jump is 5 lb. The coach uses this to avoid recommending loads your gym cannot provide.',
 };
 
 type ApiError = { error?: string };
@@ -443,6 +480,11 @@ function EmptyMessage({ title, body }: { title: string; body: string }) {
 
 export function TrainingDashboard({ data }: { data: DashboardData }) {
   const [view, setView] = useState<View>('today');
+  const [selectedCoachId, setSelectedCoachId] =
+    useState<CoachId>(DEFAULT_COACH_ID);
+  const [selectedCoachModel, setSelectedCoachModel] =
+    useState<CoachModelId>(DEFAULT_COACH_MODEL);
+  const [reviewExpanded, setReviewExpanded] = useState(false);
   const [selectedTrend, setSelectedTrend] = useState(
     data.strengthTrends[0]?.exercise ?? data.trend.exercise,
   );
@@ -516,9 +558,13 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     null,
   );
   const [programAdjustment, setProgramAdjustment] = useState('');
-  const [nextSession, setNextSession] = useState<NextSessionPayload['session'] | null>(null);
+  const [nextSession, setNextSession] = useState<
+    NextSessionPayload['session'] | null
+  >(null);
   const [nextSessionBusy, setNextSessionBusy] = useState(false);
-  const [routinePreview, setRoutinePreview] = useState<RoutinePreview | null>(null);
+  const [routinePreview, setRoutinePreview] = useState<RoutinePreview | null>(
+    null,
+  );
   const [routineBusy, setRoutineBusy] = useState(false);
   const [routineError, setRoutineError] = useState('');
   const [programForm, setProgramForm] = useState({
@@ -532,6 +578,26 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   const sourceCloseTimer = useRef<number | null>(null);
   const unit = profile.weightUnit;
   const profileHeight = imperialHeight(profile.heightCm);
+  const selectedCoach =
+    COACHES.find((coach) => coach.id === selectedCoachId) ?? COACHES[0];
+
+  function chooseCoach(coachId: CoachId) {
+    setSelectedCoachId(coachId);
+    try {
+      window.localStorage.setItem('hevy-coach.persona', coachId);
+    } catch {
+      // The choice still works for this session when storage is unavailable.
+    }
+  }
+
+  function chooseCoachModel(model: CoachModelId) {
+    setSelectedCoachModel(model);
+    try {
+      window.localStorage.setItem('hevy-coach.model', model);
+    } catch {
+      // The choice still works for this session when storage is unavailable.
+    }
+  }
 
   const selectedStrength =
     data.strengthTrends.find((item) => item.exercise === selectedTrend) ??
@@ -802,6 +868,20 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     },
     [],
   );
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        const savedCoach = window.localStorage.getItem('hevy-coach.persona');
+        const savedModel = window.localStorage.getItem('hevy-coach.model');
+        if (isCoachId(savedCoach)) setSelectedCoachId(savedCoach);
+        if (isCoachModelId(savedModel)) setSelectedCoachModel(savedModel);
+      } catch {
+        // Defaults remain available when browser storage is blocked.
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     void Promise.all([
@@ -1075,6 +1155,8 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
         body: JSON.stringify({
           conversationId: resolvedConversationId,
           message: content,
+          coachId: selectedCoachId,
+          model: selectedCoachModel,
         }),
       });
       const payload = await readJson<
@@ -1342,7 +1424,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
         error?: string;
       }>(response);
       if (!response.ok || !payload.confirmationToken || !payload.expiresAt) {
-        throw new Error(payload.error || 'This day cannot be prepared for Hevy yet.');
+        throw new Error(
+          payload.error || 'This day cannot be prepared for Hevy yet.',
+        );
       }
       setRoutinePreview({
         dayIndex,
@@ -1351,7 +1435,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
         expiresAt: payload.expiresAt,
       });
     } catch (error) {
-      setRoutineError(error instanceof Error ? error.message : 'Routine preview failed.');
+      setRoutineError(
+        error instanceof Error ? error.message : 'Routine preview failed.',
+      );
     } finally {
       setRoutineBusy(false);
     }
@@ -1371,14 +1457,21 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
           confirmationToken: routinePreview.confirmationToken,
         }),
       });
-      const payload = await readJson<{ program?: TrainingProgram; error?: string }>(response);
+      const payload = await readJson<{
+        program?: TrainingProgram;
+        error?: string;
+      }>(response);
       if (!response.ok || !payload.program) {
         throw new Error(payload.error || 'Hevy could not save this routine.');
       }
       replaceProgram(payload.program);
       setRoutinePreview(null);
     } catch (error) {
-      setRoutineError(error instanceof Error ? error.message : 'Hevy could not save this routine.');
+      setRoutineError(
+        error instanceof Error
+          ? error.message
+          : 'Hevy could not save this routine.',
+      );
     } finally {
       setRoutineBusy(false);
     }
@@ -1431,7 +1524,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                   : view === 'history'
                     ? 'Your training log.'
                     : view === 'coach'
-                      ? 'Coach Rowan.'
+                      ? `Coach ${selectedCoach.name}.`
                       : view === 'program'
                         ? 'Build the next block.'
                         : 'Athlete context.'}
@@ -1511,9 +1604,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                           <Check /> Wins
                         </span>
                         {data.weeklyReviewV2.wins.length ? (
-                          data.weeklyReviewV2.wins.map((item) => (
-                            <p key={item.id}>{item.headline}</p>
-                          ))
+                          data.weeklyReviewV2.wins
+                            .slice(0, reviewExpanded ? undefined : 4)
+                            .map((item) => <p key={item.id}>{item.headline}</p>)
                         ) : (
                           <p>No new wins were verified in this window.</p>
                         )}
@@ -1523,9 +1616,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                           <CircleAlert /> Watch
                         </span>
                         {data.weeklyReviewV2.watch.length ? (
-                          data.weeklyReviewV2.watch.map((item) => (
-                            <p key={item.id}>{item.headline}</p>
-                          ))
+                          data.weeklyReviewV2.watch
+                            .slice(0, reviewExpanded ? undefined : 4)
+                            .map((item) => <p key={item.id}>{item.headline}</p>)
                         ) : (
                           <p>No watch items were raised by the evidence.</p>
                         )}
@@ -1535,11 +1628,13 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                           <Target /> Next week
                         </span>
                         {data.weeklyReviewV2.act.length ? (
-                          data.weeklyReviewV2.act.map((item) => (
-                            <p key={item.id}>
-                              {item.recommendation || item.headline}
-                            </p>
-                          ))
+                          data.weeklyReviewV2.act
+                            .slice(0, reviewExpanded ? undefined : 4)
+                            .map((item) => (
+                              <p key={item.id}>
+                                {item.recommendation || item.headline}
+                              </p>
+                            ))
                         ) : (
                           <p>
                             Keep the current exposures consistent and reassess
@@ -1563,29 +1658,61 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                         <span className="review-label good">
                           <Check /> Wins
                         </span>
-                        {data.weeklyReview.wins.map((item) => (
-                          <p key={item}>{item}</p>
-                        ))}
+                        {data.weeklyReview.wins
+                          .slice(0, reviewExpanded ? undefined : 4)
+                          .map((item) => (
+                            <p key={item}>{item}</p>
+                          ))}
                       </div>
                       <div>
                         <span className="review-label warn">
                           <CircleAlert /> Watch
                         </span>
-                        {data.weeklyReview.watch.map((item) => (
-                          <p key={item}>{item}</p>
-                        ))}
+                        {data.weeklyReview.watch
+                          .slice(0, reviewExpanded ? undefined : 4)
+                          .map((item) => (
+                            <p key={item}>{item}</p>
+                          ))}
                       </div>
                       <div>
                         <span className="review-label">
                           <Target /> Next week
                         </span>
-                        {data.weeklyReview.nextSteps.map((item) => (
-                          <p key={item}>{item}</p>
-                        ))}
+                        {data.weeklyReview.nextSteps
+                          .slice(0, reviewExpanded ? undefined : 4)
+                          .map((item) => (
+                            <p key={item}>{item}</p>
+                          ))}
                       </div>
                     </>
                   )}
                 </div>
+                {(data.weeklyReviewV2
+                  ? data.weeklyReviewV2.wins.length > 4 ||
+                    data.weeklyReviewV2.watch.length > 4 ||
+                    data.weeklyReviewV2.act.length > 4
+                  : data.weeklyReview.wins.length > 4 ||
+                    data.weeklyReview.watch.length > 4 ||
+                    data.weeklyReview.nextSteps.length > 4) && (
+                  <button
+                    className="review-toggle"
+                    type="button"
+                    aria-expanded={reviewExpanded}
+                    onClick={() => setReviewExpanded((expanded) => !expanded)}
+                  >
+                    {reviewExpanded
+                      ? 'Show summary'
+                      : `Show all ${
+                          data.weeklyReviewV2
+                            ? data.weeklyReviewV2.wins.length +
+                              data.weeklyReviewV2.watch.length +
+                              data.weeklyReviewV2.act.length
+                            : data.weeklyReview.wins.length +
+                              data.weeklyReview.watch.length +
+                              data.weeklyReview.nextSteps.length
+                        } details`}
+                  </button>
+                )}
                 {data.weeklyReviewV2 && (
                   <div className="review-summary-line">
                     {data.weeklyReviewV2.summary.sessions} /{' '}
@@ -2007,10 +2134,15 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     <div className="slot-manager-heading">
                       <div>
                         <p className="eyebrow">VARIATION SLOTS</p>
-                        <strong>Keep rotated movements together.</strong>
+                        <div className="panel-title-row">
+                          <strong>Keep rotated movements together.</strong>
+                          <InfoTooltip title="Variation slots">
+                            {PROGRESS_HELP.variationSlots}
+                          </InfoTooltip>
+                        </div>
                         <small>
-                          Slots give Rowan one progression history when you
-                          change equipment or exercise variation.
+                          Group comparable exercises to keep one progression
+                          history when equipment or variations change.
                         </small>
                       </div>
                       <Dumbbell aria-hidden="true" />
@@ -2306,9 +2438,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     <div className="panel-title-row">
                       <h2>Where the work is going</h2>
                       <InfoTooltip title="Balance signals">
-                        These ratios compare your own four-week direct-set
-                        distribution. They are signals to investigate, not
-                        universal prescriptions.
+                        {PROGRESS_HELP.balanceSignals}
                       </InfoTooltip>
                     </div>
                   </div>
@@ -2397,6 +2527,45 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
               <Button className="new-chat" onClick={createChat}>
                 <Plus /> New chat
               </Button>
+              <div className="coach-preferences">
+                <label>
+                  <span>Coach</span>
+                  <select
+                    value={selectedCoachId}
+                    onChange={(event) => {
+                      if (isCoachId(event.target.value)) {
+                        chooseCoach(event.target.value);
+                      }
+                    }}
+                  >
+                    {COACHES.map((coach) => (
+                      <option key={coach.id} value={coach.id}>
+                        {coach.name} — {coach.specialty}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>OpenRouter model</span>
+                  <select
+                    value={selectedCoachModel}
+                    onChange={(event) => {
+                      if (isCoachModelId(event.target.value)) {
+                        chooseCoachModel(event.target.value);
+                      }
+                    }}
+                  >
+                    {COACH_MODELS.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <small title={selectedCoach.description}>
+                  {selectedCoach.description}
+                </small>
+              </div>
               <div className="chat-history-label">Recent chats</div>
               <div className="conversation-list">
                 {conversations.map((conversation) => (
@@ -2446,10 +2615,10 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 )}
               </div>
               <div className="coach-identity">
-                <span>R</span>
+                <span>{selectedCoach.initials}</span>
                 <div>
-                  <strong>Rowan</strong>
-                  <small>Strength & physique coach</small>
+                  <strong>{selectedCoach.name}</strong>
+                  <small>{selectedCoach.specialty} coach</small>
                 </div>
               </div>
             </aside>
@@ -2463,14 +2632,14 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     >
                       <div className="message-avatar">
                         {message.role === 'assistant'
-                          ? 'R'
+                          ? coachFor(message.coachId).initials
                           : profile.displayName.slice(0, 1).toUpperCase()}
                       </div>
                       <div>
                         <div className="message-meta">
                           <strong>
                             {message.role === 'assistant'
-                              ? 'Coach Rowan'
+                              ? `Coach ${coachFor(message.coachId).name}`
                               : 'You'}
                           </strong>
                           {message.model && <span>{message.model}</span>}
@@ -2495,12 +2664,15 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                   ))
                 ) : (
                   <div className="coach-welcome">
-                    <div className="coach-monogram">R</div>
+                    <div className="coach-monogram">
+                      {selectedCoach.initials}
+                    </div>
                     <p className="eyebrow">PRIVATE COACH / HEVY-GROUNDED</p>
                     <h2>What are we solving today?</h2>
                     <p>
-                      Rowan reads your profile, recent sessions, workload, and
-                      strength trends before answering.
+                      {selectedCoach.name} reads your profile, recent sessions,
+                      workload, and strength trends before answering, with an
+                      emphasis on {selectedCoach.specialty.toLowerCase()}.
                     </p>
                     <div className="starter-grid">
                       {STARTERS.map((starter) => (
@@ -2518,10 +2690,12 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 )}
                 {chatBusy && (
                   <article className="message assistant">
-                    <div className="message-avatar">R</div>
+                    <div className="message-avatar">
+                      {selectedCoach.initials}
+                    </div>
                     <div>
                       <div className="message-meta">
-                        <strong>Coach Rowan</strong>
+                        <strong>Coach {selectedCoach.name}</strong>
                         <span>reading your training history</span>
                       </div>
                       <div className="thinking">
@@ -2823,7 +2997,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                       </p>
                     )}
                     {routineError && (
-                      <p className="form-error program-action-error">{routineError}</p>
+                      <p className="form-error program-action-error">
+                        {routineError}
+                      </p>
                     )}
                     {nextSession && (
                       <section className="next-session-card">
@@ -2838,7 +3014,10 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                               <strong>{exercise.name}</strong>
                               <span>
                                 {exercise.sets} × {exercise.reps}
-                                {exercise.load ? ` @ ${exercise.load}` : ''} · {exercise.effort}
+                                {exercise.load
+                                  ? ` @ ${exercise.load}`
+                                  : ''} ·{' '}
+                                {exercise.effort}
                               </span>
                             </div>
                           ))}
@@ -2856,10 +3035,13 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                           <p className="eyebrow">HEVY ROUTINE PREVIEW</p>
                           <h3>Review before writing</h3>
                           <p>
-                            This is the exact routine payload Hevy will receive. Nothing has been written yet.
+                            This is the exact routine payload Hevy will receive.
+                            Nothing has been written yet.
                           </p>
                         </div>
-                        <pre>{JSON.stringify(routinePreview.payload, null, 2)}</pre>
+                        <pre>
+                          {JSON.stringify(routinePreview.payload, null, 2)}
+                        </pre>
                         <div className="routine-preview-actions">
                           <Button
                             type="button"
@@ -2867,7 +3049,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                             onClick={() => void confirmRoutineWrite()}
                             disabled={routineBusy}
                           >
-                            {routineBusy ? 'Writing…' : 'Confirm & write to Hevy'}
+                            {routineBusy
+                              ? 'Writing…'
+                              : 'Confirm & write to Hevy'}
                           </Button>
                           <Button
                             type="button"
@@ -2878,7 +3062,12 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                           >
                             Cancel
                           </Button>
-                          <small>Preview expires {new Date(routinePreview.expiresAt).toLocaleTimeString()}</small>
+                          <small>
+                            Preview expires{' '}
+                            {new Date(
+                              routinePreview.expiresAt,
+                            ).toLocaleTimeString()}
+                          </small>
                         </div>
                       </section>
                     )}
@@ -2906,9 +3095,16 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                               variant="outline"
                               size="sm"
                               onClick={() => void previewRoutine(day.day - 1)}
-                              disabled={routineBusy || day.exercises.some((exercise) => !exercise.exerciseTemplateId)}
+                              disabled={
+                                routineBusy ||
+                                day.exercises.some(
+                                  (exercise) => !exercise.exerciseTemplateId,
+                                )
+                              }
                             >
-                              {day.hevyRoutineId ? 'Update in Hevy' : 'Preview Hevy routine'}
+                              {day.hevyRoutineId
+                                ? 'Update in Hevy'
+                                : 'Preview Hevy routine'}
                             </Button>
                           </div>
                           <div className="day-exercises">
@@ -2922,14 +3118,19 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                                     {exercise.startingLoadKg != null
                                       ? `Starts at ${formatWeight(exercise.startingLoadKg, unit)} · `
                                       : ''}
-                                    {exercise.progression.rule.replaceAll('_', ' ')}
+                                    {exercise.progression.rule.replaceAll(
+                                      '_',
+                                      ' ',
+                                    )}
                                   </small>
                                 </div>
                                 <b>
-                                  {exercise.sets} × {formatRepRange(exercise.repRange)}
+                                  {exercise.sets} ×{' '}
+                                  {formatRepRange(exercise.repRange)}
                                 </b>
                                 <em>
-                                  {formatEffort(exercise.effort)} · {exercise.restSeconds}s
+                                  {formatEffort(exercise.effort)} ·{' '}
+                                  {exercise.restSeconds}s
                                 </em>
                               </div>
                             ))}
@@ -3271,7 +3472,12 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 </div>
                 <div className="form-grid">
                   <label>
-                    <span>Training phase</span>
+                    <span className="form-label-with-help">
+                      Training phase
+                      <InfoTooltip title="Training phase">
+                        {PROFILE_HELP.phase}
+                      </InfoTooltip>
+                    </span>
                     <select
                       value={profile.phase}
                       onChange={(event) =>
@@ -3289,7 +3495,12 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     </select>
                   </label>
                   <label>
-                    <span>Phase start</span>
+                    <span className="form-label-with-help">
+                      Phase start
+                      <InfoTooltip title="Phase start">
+                        {PROFILE_HELP.phaseStart}
+                      </InfoTooltip>
+                    </span>
                     <input
                       type="date"
                       value={profile.phaseStartedAt}
@@ -3302,8 +3513,11 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     />
                   </label>
                   <label>
-                    <span>
+                    <span className="form-label-with-help">
                       Daily calories <small>optional</small>
+                      <InfoTooltip title="Daily calories">
+                        {PROFILE_HELP.calories}
+                      </InfoTooltip>
                     </span>
                     <input
                       type="number"
@@ -3321,8 +3535,11 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     />
                   </label>
                   <label>
-                    <span>
+                    <span className="form-label-with-help">
                       Protein (g) <small>optional</small>
+                      <InfoTooltip title="Protein target">
+                        {PROFILE_HELP.protein}
+                      </InfoTooltip>
                     </span>
                     <input
                       type="number"
@@ -3340,7 +3557,12 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     />
                   </label>
                   <label>
-                    <span>Typical sleep (hours)</span>
+                    <span className="form-label-with-help">
+                      Typical sleep (hours)
+                      <InfoTooltip title="Typical sleep">
+                        {PROFILE_HELP.sleep}
+                      </InfoTooltip>
+                    </span>
                     <input
                       type="number"
                       min="0"
@@ -3358,7 +3580,12 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     />
                   </label>
                   <label>
-                    <span>Dropset volume weight</span>
+                    <span className="form-label-with-help">
+                      Dropset volume weight
+                      <InfoTooltip title="Dropset volume weight">
+                        {PROFILE_HELP.dropsetWeight}
+                      </InfoTooltip>
+                    </span>
                     <input
                       type="number"
                       min="0"
@@ -3374,7 +3601,12 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     />
                   </label>
                   <label>
-                    <span>Timezone</span>
+                    <span className="form-label-with-help">
+                      Timezone
+                      <InfoTooltip title="Timezone">
+                        {PROFILE_HELP.timezone}
+                      </InfoTooltip>
+                    </span>
                     <select
                       value={profile.timezone}
                       onChange={(event) =>
@@ -3397,7 +3629,12 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     </select>
                   </label>
                   <div className="span-two profile-subsection-label">
-                    <span>Smallest practical load increment ({unit})</span>
+                    <span className="form-label-with-help">
+                      Smallest practical load increment ({unit})
+                      <InfoTooltip title="Smallest practical load increment">
+                        {PROFILE_HELP.loadIncrement}
+                      </InfoTooltip>
+                    </span>
                   </div>
                   {(['barbell', 'dumbbell', 'machine', 'cable'] as const).map(
                     (equipment) => (
