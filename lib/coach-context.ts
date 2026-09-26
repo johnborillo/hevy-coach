@@ -229,6 +229,13 @@ export function buildCoachContext(
       band: muscle.bandLabel,
     })),
     adherence: dashboard.adherenceWeeks,
+    workoutCoverage: {
+      totalVerified: dashboard.calendarWorkouts.length,
+      oldestDate: dashboard.calendarWorkouts.at(-1)?.date ?? null,
+      newestDate: dashboard.calendarWorkouts[0]?.date ?? null,
+    },
+    retrievalNote:
+      'Only the verifiedHevyWorkoutLog and retrievedNotes above may support exact workout or note claims. Quote notes verbatim when useful. If another exact workout is needed, request it with [NEED: workout YYYY-MM-DD].',
     verifiedHevyWorkoutLog: selected.map((workout) => compactWorkout(workout, profile)),
     retrievedNotes: (options.noteResults ?? []).map((note) => ({
       workoutId: note.workoutId,
@@ -238,13 +245,6 @@ export function buildCoachContext(
       exerciseTitle: note.exerciseTitle,
       note: note.text,
     })),
-    workoutCoverage: {
-      totalVerified: dashboard.calendarWorkouts.length,
-      oldestDate: dashboard.calendarWorkouts.at(-1)?.date ?? null,
-      newestDate: dashboard.calendarWorkouts[0]?.date ?? null,
-    },
-    retrievalNote:
-      'Only the verifiedHevyWorkoutLog and retrievedNotes above may support exact workout or note claims. Quote notes verbatim when useful. If another exact workout is needed, request it with [NEED: workout YYYY-MM-DD].',
   };
   const text = JSON.stringify(contextObject);
   return {
