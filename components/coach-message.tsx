@@ -5,6 +5,7 @@ import { AlertTriangle, CalendarDays, ChevronRight, Database, X } from "lucide-r
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import type { CoachMessageFlags } from "@/lib/coach-options";
 import type { CalendarWorkout, DashboardData } from "@/lib/hevy";
 import type { WeightUnit } from "@/lib/storage";
 
@@ -34,6 +35,21 @@ const SUMMARY_LABELS: Record<string, string> = {
   latestworkout: "Latest workout",
   workoutcoverage: "Workout coverage",
 };
+
+function highlightUnverifiedExcerpt(excerpt: string, tokens: string[]) {
+  const escaped = tokens
+    .filter(Boolean)
+    .map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (!escaped.length) return excerpt;
+  const matcher = new RegExp(`(${escaped.join('|')})`, 'gi');
+  return excerpt.split(matcher).map((part, index) =>
+    tokens.some((token) => token.toLowerCase() === part.toLowerCase()) ? (
+      <strong key={`${part}-${index}`}>{part}</strong>
+    ) : (
+      part
+    ),
+  );
+}
 
 function normalizeField(value: string) {
   return value.toLowerCase().replace(/[^a-z]/g, "");
@@ -364,7 +380,7 @@ export function CoachSourcePanel({ source, data, unit, onOpenWorkout, onClose }:
   );
 }
 
-export function CoachMessage({ content, fallbackReason, animate = false, activeSource, onSourceChange, onComplete }: { content: string; fallbackReason?: string | null; animate?: boolean; activeSource: CoachSource | null; onSourceChange: (source: CoachSource | null) => void; onComplete?: () => void }) {
+export function CoachMessage({ content, fallbackReason, flags, animate = false, activeSource, onSourceChange, onComplete }: { content: string; fallbackReason?: string | null; flags?: CoachMessageFlags | null; animate?: boolean; activeSource: CoachSource | null; onSourceChange: (source: CoachSource | null) => void; onComplete?: () => void }) {
   const [visible, setVisible] = useState(animate ? "" : content);
 
   useEffect(() => {
@@ -427,6 +443,19 @@ export function CoachMessage({ content, fallbackReason, animate = false, activeS
           </summary>
           <p>{fallbackReason}</p>
         </details>
+      )}
+      {flags?.notice && !revealing && <p className="coach-notice">{flags.notice}</p>}
+      {flags?.validation === 'unverified' && flags.unverified?.length && !revealing && (
+        <aside className="coach-unverified-note">
+          <p>Couldn&apos;t match these figures to your Hevy log:</p>
+          <ul>
+            {flags.unverified.map((item, index) => (
+              <li key={`${item.excerpt}-${index}`}>
+                {highlightUnverifiedExcerpt(item.excerpt, item.tokens)}
+              </li>
+            ))}
+          </ul>
+        </aside>
       )}
     </div>
   );
