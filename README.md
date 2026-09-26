@@ -86,3 +86,5 @@ never poll Hevy directly. The header sync action refreshes stale data on demand.
 ## Safety boundaries
 
 Estimated 1RM is treated as a trend signal, not a tested maximum. Coaching guidance is informational and does not diagnose injury or medical conditions. Programs remain drafts, and nothing is written back to Hevy without explicit approval.
+
+Coach replies use SSE when the browser advertises `Accept: text/event-stream`; the JSON response remains available as a fallback. Streaming status events are announced politely and the saved assistant message is authoritative after completion.
