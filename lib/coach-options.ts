@@ -7,6 +7,14 @@ export const COACH_MODELS = [
     id: 'openai/gpt-6-luna',
     label: 'GPT-6 Luna',
   },
+  {
+    id: 'deepseek/deepseek-v4.1-flash',
+    label: 'DeepSeek V4.1 Flash',
+  },
+  {
+    id: 'deepseek/deepseek-v4-flash-0731',
+    label: 'DeepSeek V4 Flash (0731)',
+  },
 ] as const;
 
 export const COACHES = [

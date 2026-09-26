@@ -14,8 +14,11 @@ describe('coach options', () => {
     expect(COACH_MODELS.map((model) => model.id)).toEqual([
       'z-ai/glm-5.3-flash',
       'openai/gpt-6-luna',
+      'deepseek/deepseek-v4.1-flash',
+      'deepseek/deepseek-v4-flash-0731',
     ]);
     expect(isCoachModelId('openai/gpt-6-luna')).toBe(true);
+    expect(isCoachModelId('deepseek/deepseek-v4.1-flash')).toBe(true);
     expect(isCoachModelId('unsupported/model')).toBe(false);
   });
 

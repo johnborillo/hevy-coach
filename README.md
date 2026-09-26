@@ -35,6 +35,10 @@ OPENROUTER_MODEL_PROGRAM=
 OPENROUTER_MODEL_REVIEW=
 ```
 
+The chat picker supports GLM 5.3 Flash, GPT-6 Luna, DeepSeek V4.1 Flash, and
+DeepSeek V4 Flash (0731). All OpenRouter requests require the provider privacy
+policy `data_collection: deny`.
+
 Secrets are read only by server routes. `HEVY_ROUTINE_CONFIRM_SECRET` signs short-lived routine preview confirmations; if omitted, the Hevy API key is used as the signing secret. Never commit `.env.local` or place keys in browser code.
 
 ## Local development
@@ -60,6 +64,17 @@ npm run build
 The analysis suite uses deterministic 26-week novice, intermediate, and advanced
 athlete fixtures. Derived metrics carry an analysis-engine version and source
 coverage metadata so future calculation changes can be audited and re-derived.
+
+To run the owner-only coach comparison harness (it never prints answer text),
+provide an OpenRouter key and select models/fixtures:
+
+```bash
+npm run eval:coach -- --models z-ai/glm-5.3-flash,openai/gpt-6-luna --fixtures novice,intermediate,advanced --out evals/results/owner-run.json
+```
+
+Use `--dry-run` to exercise the harness with mocked completions. Before relying
+on the DeepSeek entries in production, verify their current OpenRouter
+`supported_parameters` for reasoning and JSON response-format support.
 
 Hevy workouts are stored twice: a raw JSON snapshot for faithful re-analysis and
 normalized workout, set, and template rows for fast bounded queries. The typed
