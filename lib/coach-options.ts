@@ -23,6 +23,16 @@ export const COACHES = [
 export type CoachModelId = (typeof COACH_MODELS)[number]['id'];
 export type CoachId = (typeof COACHES)[number]['id'];
 
+export type CoachMessageFlags = {
+  v: 1;
+  refusal?: boolean;
+  requestedModel?: string;
+  notice?: string;
+  validation?: 'passed' | 'passed_after_retry' | 'unverified';
+  unverified?: Array<{ excerpt: string; tokens: string[] }>;
+  passes?: number;
+};
+
 export const DEFAULT_COACH_MODEL: CoachModelId = 'z-ai/glm-5.3-flash';
 export const DEFAULT_COACH_ID: CoachId = 'rowan';
 
@@ -40,11 +50,23 @@ export function encodeCoachMessageMetadata(
   coachId: CoachId,
   model: string,
   fallbackReason?: string | null,
+  flags?: CoachMessageFlags | null,
 ) {
   const reason = fallbackReason
-    ? `|${encodeURIComponent(fallbackReason.slice(0, 600))}`
+    ? encodeURIComponent(fallbackReason.slice(0, 600))
     : '';
-  return `${MESSAGE_METADATA_PREFIX}${coachId}|${model}${reason}`;
+  const serializedFlags = flags
+    ? encodeURIComponent(
+        JSON.stringify({
+          ...flags,
+          notice: flags.notice?.slice(0, 200),
+        }),
+      )
+    : '';
+  const hasMetadata = Boolean(fallbackReason || flags);
+  return `${MESSAGE_METADATA_PREFIX}${coachId}|${model}${
+    hasMetadata ? `|${reason}` : ''
+  }${flags ? `|${serializedFlags}` : ''}`;
 }
 
 export function decodeCoachMessageMetadata(value: string | null) {
@@ -58,8 +80,12 @@ export function decodeCoachMessageMetadata(value: string | null) {
   const coachId = value.slice(MESSAGE_METADATA_PREFIX.length, separator);
   const encodedModel = value.slice(separator + 1);
   const modelSeparator = encodedModel.indexOf('|');
-  const model = modelSeparator < 0 ? encodedModel : encodedModel.slice(0, modelSeparator);
-  const encodedReason = modelSeparator < 0 ? '' : encodedModel.slice(modelSeparator + 1);
+  const model =
+    modelSeparator < 0 ? encodedModel : encodedModel.slice(0, modelSeparator);
+  const metadata =
+    modelSeparator < 0 ? '' : encodedModel.slice(modelSeparator + 1);
+  const metadataParts = metadata.split('|');
+  const encodedReason = metadataParts[0] ?? '';
   let fallbackReason: string | null = null;
   if (encodedReason) {
     try {
@@ -68,9 +94,25 @@ export function decodeCoachMessageMetadata(value: string | null) {
       fallbackReason = encodedReason;
     }
   }
-  return {
+  const decoded = {
     coachId: isCoachId(coachId) ? coachId : DEFAULT_COACH_ID,
     model: model || null,
     fallbackReason,
   };
+  const encodedFlags = metadataParts[1];
+  if (!encodedFlags) return decoded;
+  try {
+    const parsed: unknown = JSON.parse(decodeURIComponent(encodedFlags));
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      'v' in parsed &&
+      parsed.v === 1
+    ) {
+      return { ...decoded, flags: parsed as CoachMessageFlags };
+    }
+  } catch {
+    // Keep the message readable if metadata from a future version is malformed.
+  }
+  return decoded;
 }

@@ -234,6 +234,47 @@ async function readJson<T>(response: Response) {
   return response.json() as Promise<T>;
 }
 
+async function readCoachStream(
+  response: Response,
+  onEvent: (event: string, payload: unknown) => void,
+) {
+  if (!response.body) throw new Error('The coach stream did not return a body.');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let event = '';
+  let data = '';
+  const consume = (line: string) => {
+    if (!line.trim()) {
+      if (event && data) {
+        try {
+          onEvent(event, JSON.parse(data));
+        } catch {
+          throw new Error('The coach stream returned invalid data.');
+        }
+      }
+      event = '';
+      data = '';
+      return;
+    }
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) data += line.slice(5).trim();
+  };
+  while (true) {
+    const result = await reader.read();
+    if (result.done) {
+      buffer += decoder.decode();
+      break;
+    }
+    buffer += decoder.decode(result.value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? '';
+    for (const line of lines) consume(line);
+  }
+  if (buffer) consume(buffer);
+  consume('');
+}
+
 function toDisplayWeight(value: number, unit: WeightUnit) {
   return unit === 'kg' ? value : value * 2.20462;
 }
@@ -511,6 +552,8 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
   const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
   const [chatError, setChatError] = useState('');
+  const [streamingDraft, setStreamingDraft] = useState('');
+  const [streamingStatus, setStreamingStatus] = useState<string | null>(null);
   const [animatingMessageId, setAnimatingMessageId] = useState<string | null>(
     null,
   );
@@ -1134,33 +1177,98 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
     };
     setMessages((current) => [...current, optimistic]);
     try {
-      const response = await fetch('/api/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          conversationId: resolvedConversationId,
-          message: content,
-          coachId: DEFAULT_COACH_ID,
-          model: selectedCoachModel,
-        }),
-      });
-      const payload = await readJson<
-        { userMessage: ChatMessage; assistantMessage: ChatMessage } & ApiError
-      >(response);
-      if (!response.ok)
-        throw new Error(payload.error || 'The coach could not answer.');
-      setMessages((current) => [...current, payload.assistantMessage]);
-      setAnimatingMessageId(payload.assistantMessage.id);
-      const refreshed = await fetch('/api/conversations').then((result) =>
-        readJson<{ conversations: ConversationSummary[] }>(result),
-      );
-      if (refreshed.conversations)
-        setConversations(orderConversations(refreshed.conversations));
+      setStreamingDraft('');
+      setStreamingStatus(null);
+      let streamedAssistant: ChatMessage | null = null;
+      let receivedStreamByte = false;
+      try {
+        const streamResponse = await fetch('/api/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream',
+          },
+          body: JSON.stringify({
+            conversationId: resolvedConversationId,
+            message: content,
+            coachId: DEFAULT_COACH_ID,
+            model: selectedCoachModel,
+          }),
+        });
+        if (streamResponse.ok && streamResponse.headers.get('content-type')?.includes('text/event-stream')) {
+          await readCoachStream(streamResponse, (event, payload) => {
+            receivedStreamByte = true;
+            const data = payload as {
+              text?: string;
+              state?: string;
+              assistantMessage?: ChatMessage;
+              error?: string;
+            };
+            if (event === 'delta' && typeof data.text === 'string') {
+              setStreamingDraft((current) => current + data.text);
+            } else if (event === 'reset') {
+              setStreamingDraft('');
+            } else if (event === 'status') {
+              setStreamingStatus(
+                data.state === 'retrieving_workouts'
+                  ? 'Pulling that workout…'
+                  : data.state === 'double_checking'
+                    ? 'Double-checking against your log…'
+                    : 'Trying another model…',
+              );
+            } else if (event === 'done' && data.assistantMessage) {
+              streamedAssistant = data.assistantMessage;
+            } else if (event === 'error') {
+              throw new Error(data.error || 'The coach could not answer.');
+            }
+          });
+          if (!streamedAssistant) throw new Error('The coach stream ended before the reply was saved.');
+        } else if (streamResponse.body) {
+          throw new Error('The coach stream was unavailable.');
+        }
+      } catch (error) {
+        if (receivedStreamByte) throw error;
+      }
+      if (streamedAssistant) {
+        setMessages((current) => [...current, streamedAssistant as ChatMessage]);
+        setAnimatingMessageId(null);
+      } else {
+        const response = await fetch('/api/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversationId: resolvedConversationId,
+            message: content,
+            coachId: DEFAULT_COACH_ID,
+            model: selectedCoachModel,
+          }),
+        });
+        const payload = await readJson<
+          { userMessage: ChatMessage; assistantMessage: ChatMessage } & ApiError
+        >(response);
+        if (!response.ok)
+          throw new Error(payload.error || 'The coach could not answer.');
+        setMessages((current) => [...current, payload.assistantMessage]);
+        setAnimatingMessageId(payload.assistantMessage.id);
+      }
+      void fetch('/api/conversations')
+        .then((result) =>
+          readJson<{ conversations: ConversationSummary[] }>(result),
+        )
+        .then((refreshed) => {
+          if (refreshed.conversations)
+            setConversations(orderConversations(refreshed.conversations));
+        })
+        .catch((error: unknown) => {
+          console.error('Conversation refresh failed after coach reply', error);
+        });
     } catch (error) {
       setChatError(
         error instanceof Error ? error.message : 'The coach could not answer.',
       );
     } finally {
+      setStreamingDraft('');
+      setStreamingStatus(null);
       setChatBusy(false);
     }
   }
@@ -2616,6 +2724,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                           <CoachMessage
                             content={message.content}
                             fallbackReason={message.fallbackReason}
+                            flags={message.flags}
                             animate={message.id === animatingMessageId}
                             activeSource={coachSource}
                             onSourceChange={changeCoachSource}
@@ -2657,7 +2766,24 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     </div>
                   </div>
                 )}
-                {chatBusy && (
+                {chatBusy && streamingDraft && (
+                  <article className="message assistant">
+                    <div className="message-avatar">{selectedCoach.initials}</div>
+                    <div>
+                      <div className="message-meta">
+                        <strong>Coach {selectedCoach.name}</strong>
+                        {streamingStatus && <span aria-live="polite">{streamingStatus}</span>}
+                      </div>
+                      <CoachMessage
+                        content={streamingDraft}
+                        animate={false}
+                        activeSource={coachSource}
+                        onSourceChange={changeCoachSource}
+                      />
+                    </div>
+                  </article>
+                )}
+                {chatBusy && !streamingDraft && (
                   <article className="message assistant">
                     <div className="message-avatar">
                       {selectedCoach.initials}
@@ -2665,7 +2791,9 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                     <div>
                       <div className="message-meta">
                         <strong>Coach {selectedCoach.name}</strong>
-                        <span>reading your training history</span>
+                        <span aria-live="polite">
+                          {streamingStatus ?? 'reading your training history'}
+                        </span>
                       </div>
                       <div className="thinking">
                         <i />

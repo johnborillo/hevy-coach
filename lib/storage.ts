@@ -3,6 +3,7 @@ import {
   decodeCoachMessageMetadata,
   encodeCoachMessageMetadata,
   type CoachId,
+  type CoachMessageFlags,
 } from './coach-options';
 import { migrateProgramContent } from './program-v2';
 
@@ -64,6 +65,7 @@ export type ChatMessage = {
   model: string | null;
   coachId?: CoachId | null;
   fallbackReason?: string | null;
+  flags?: CoachMessageFlags | null;
   createdAt: string;
 };
 
@@ -374,8 +376,12 @@ export async function listMessages(userId: string, conversationId: string) {
   const result = await getDatabase()
     .prepare(
       `SELECT id, conversation_id, role, content, model, created_at
-       FROM messages WHERE conversation_id = ? AND user_id = ?
-       ORDER BY created_at ASC LIMIT 100`,
+       FROM (
+         SELECT id, conversation_id, role, content, model, created_at
+         FROM messages WHERE conversation_id = ? AND user_id = ?
+         ORDER BY created_at DESC LIMIT 100
+       )
+       ORDER BY created_at ASC`,
     )
     .bind(conversationId, userId)
     .all<{
@@ -396,6 +402,10 @@ export async function listMessages(userId: string, conversationId: string) {
       model: metadata.model,
       coachId: row.role === 'assistant' ? metadata.coachId : null,
       fallbackReason: row.role === 'assistant' ? metadata.fallbackReason : null,
+      flags:
+        row.role === 'assistant' && 'flags' in metadata
+          ? (metadata.flags ?? null)
+          : null,
       createdAt: row.created_at,
     };
   }) satisfies ChatMessage[];
@@ -409,13 +419,14 @@ export async function saveMessage(
   model: string | null = null,
   coachId: CoachId | null = null,
   fallbackReason: string | null = null,
+  flags: CoachMessageFlags | null = null,
 ) {
   const database = getDatabase();
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const storedModel =
     role === 'assistant' && model && coachId
-      ? encodeCoachMessageMetadata(coachId, model, fallbackReason)
+      ? encodeCoachMessageMetadata(coachId, model, fallbackReason, flags)
       : model;
   await database.batch([
     database
@@ -445,6 +456,7 @@ export async function saveMessage(
     model,
     coachId,
     fallbackReason,
+    flags,
     createdAt: now,
   } satisfies ChatMessage;
 }
