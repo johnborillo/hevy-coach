@@ -12,6 +12,7 @@
     "start": "node --env-file-if-exists=.env.local ./node_modules/wrangler/bin/wrangler.js dev --config dist/server/wrangler.json --local --persist-to .wrangler/state --ip 127.0.0.1 --inspector-port 0",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval:coach": "tsx scripts/eval-coach.ts",
     "lint": "oxlint",
     "format": "oxfmt",
     "db:generate": "drizzle-kit generate"
