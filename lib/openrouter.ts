@@ -11,6 +11,7 @@ import {
   buildProgramContext,
   programGenerationPrompt,
 } from './program-generate';
+import type { TurnTimer } from './coach-telemetry';
 
 const SUMMARY_CITATION_GUIDE = SUMMARY_FIELDS.map(
   (field) => `[Hevy summary: ${field}]`,
@@ -46,16 +47,99 @@ type OpenRouterMessage = {
   content: string;
 };
 
-type CompletionPayload = {
-  model?: string;
+export type CompletionPayload = {
+  id?: string | null;
+  provider?: string | null;
+  model?: string | null;
   choices?: Array<{
     finish_reason?: string | null;
+    native_finish_reason?: string | null;
     message?: {
       content?: string | Array<{ type?: string; text?: string }> | null;
       reasoning?: string | null;
+      refusal?: string | null;
     };
   }>;
+  usage?: {
+    prompt_tokens?: number | null;
+    completion_tokens?: number | null;
+    total_tokens?: number | null;
+    prompt_tokens_details?: {
+      cached_tokens?: number | null;
+    } | null;
+    completion_tokens_details?: {
+      reasoning_tokens?: number | null;
+    } | null;
+    cost?: number | null;
+  } | null;
 };
+
+export type CompletionSummary = {
+  generationId: string | null;
+  provider: string | null;
+  finishReason: string | null;
+  nativeFinishReason: string | null;
+  hasRefusalField: boolean;
+  promptTokens: number | null;
+  cachedTokens: number | null;
+  completionTokens: number | null;
+  reasoningTokens: number | null;
+  cost: number | null;
+};
+
+export type CompletionResult = {
+  payload: CompletionPayload;
+  attempts: number;
+  durationMs: number;
+};
+
+export type CoachPassTelemetry = {
+  pass: number;
+  completion:
+    | (CompletionSummary & {
+        attempts: number;
+        durationMs: number;
+      })
+    | null;
+};
+
+export type CoachAskTelemetry = {
+  passes: number;
+  completions: CoachPassTelemetry[];
+  validationOutcome: 'passed' | 'passed_after_retry' | 'unverified' | 'n/a';
+  validationFailureReasons: string[];
+};
+
+export function createCoachAskTelemetry(): CoachAskTelemetry {
+  return {
+    passes: 0,
+    completions: [],
+    validationOutcome: 'n/a',
+    validationFailureReasons: [],
+  };
+}
+
+export function summarizeCompletion(
+  payload: CompletionPayload,
+): CompletionSummary {
+  const choice = payload.choices?.[0];
+  const message = choice?.message;
+  return {
+    generationId: payload.id ?? null,
+    provider: payload.provider ?? null,
+    finishReason: choice?.finish_reason ?? null,
+    nativeFinishReason: choice?.native_finish_reason ?? null,
+    hasRefusalField:
+      message !== undefined &&
+      Object.prototype.hasOwnProperty.call(message, 'refusal'),
+    promptTokens: payload.usage?.prompt_tokens ?? null,
+    cachedTokens: payload.usage?.prompt_tokens_details?.cached_tokens ?? null,
+    completionTokens: payload.usage?.completion_tokens ?? null,
+    reasoningTokens:
+      payload.usage?.completion_tokens_details?.reasoning_tokens ?? null,
+    cost: payload.usage?.cost ?? null,
+  };
+}
 
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504, 524, 529]);
 
@@ -94,13 +178,14 @@ function retryDelay(response: Response | null, attempt: number) {
   return Math.min(450 * 2 ** attempt + Math.random() * 250, 2500);
 }
 
-export async function requestCompletion(
+export async function requestCompletionWithTelemetry(
   body: Record<string, unknown>,
   timeoutMs: number,
-) {
+): Promise<CompletionResult | null> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return null;
 
+  const startedAt = Date.now();
   for (let attempt = 0; attempt < 3; attempt += 1) {
     let response: Response | null = null;
     try {
@@ -120,6 +205,13 @@ export async function requestCompletion(
         const payload = (await response.json()) as CompletionPayload;
         const message = payload.choices?.[0]?.message;
         const content = message?.content;
+        if (payload.choices?.[0]?.finish_reason === 'length') {
+          console.warn('OpenRouter completion reached max_tokens', {
+            generationId: payload.id ?? null,
+            model: payload.model ?? body.model ?? null,
+            attempt: attempt + 1,
+          });
+        }
         const hasContent =
           (typeof content === 'string' && content.trim().length > 0) ||
           (Array.isArray(content) &&
@@ -146,7 +238,11 @@ export async function requestCompletion(
           await wait(retryDelay(response, attempt));
           continue;
         }
-        return payload;
+        return {
+          payload,
+          attempts: attempt + 1,
+          durationMs: Math.max(0, Date.now() - startedAt),
+        };
       }
 
       const detail = (await response.json().catch(() => null)) as {
@@ -177,6 +273,14 @@ export async function requestCompletion(
     }
   }
   throw new Error('OpenRouter retries were exhausted');
+}
+
+export async function requestCompletion(
+  body: Record<string, unknown>,
+  timeoutMs: number,
+) {
+  const result = await requestCompletionWithTelemetry(body, timeoutMs);
+  return result?.payload ?? null;
 }
 
 function extractJson(content: string) {
@@ -394,9 +498,12 @@ export async function askCoach(
   options: {
     model?: CoachModelId;
     coachId?: CoachId;
+    timer?: TurnTimer;
+    telemetry?: CoachAskTelemetry;
   } = {},
 ) {
   const coachId = options.coachId ?? DEFAULT_COACH_ID;
+  const telemetry = options.telemetry ?? createCoachAskTelemetry();
   const model =
     options.model ||
     process.env.OPENROUTER_MODEL_CHAT ||
@@ -415,14 +522,21 @@ export async function askCoach(
   let lastDraft = '';
   let validationFailure = '';
   const { searchStoredNotes } = await import('./notes-repo');
-  const noteResults = await searchStoredNotes(
-    userId,
-    history
-      .slice()
-      .reverse()
-      .find((message) => message.role === 'user')?.content ?? '',
-  );
+  options.timer?.start('notes');
+  let noteResults;
+  try {
+    noteResults = await searchStoredNotes(
+      userId,
+      history
+        .slice()
+        .reverse()
+        .find((message) => message.role === 'user')?.content ?? '',
+    );
+  } finally {
+    options.timer?.end('notes');
+  }
   for (let pass = 0; pass < 2; pass += 1) {
+    telemetry.passes = Math.max(telemetry.passes, pass + 1);
     const coachContext = buildCoachContext(profile, dashboard, history, {
       additionalDates: requestedDates,
       noteResults,
@@ -446,18 +560,40 @@ export async function askCoach(
             },
             ...historyMessages,
           ];
-    const payload = await requestCompletion(
-      {
-        model,
-        messages,
-        temperature: 0.35,
-        max_tokens: 2000,
-        reasoning: { effort: 'medium' },
-        provider: { data_collection: 'deny', allow_fallbacks: true },
+    const phase = pass === 0 ? 'llm.pass0' : 'llm.pass1';
+    options.timer?.start(phase);
+    let completion: CompletionResult | null = null;
+    try {
+      completion = await requestCompletionWithTelemetry(
+        {
+          model,
+          messages,
+          temperature: 0.35,
+          max_tokens: 2000,
+          reasoning: { effort: 'medium' },
+          provider: { data_collection: 'deny', allow_fallbacks: true },
+        },
+        45_000,
+      );
+    } catch (error) {
+      telemetry.completions.push({ pass, completion: null });
+      throw error;
+    } finally {
+      options.timer?.end(phase);
+    }
+    if (!completion) {
+      telemetry.completions.push({ pass, completion: null });
+      return null;
+    }
+    const { payload } = completion;
+    telemetry.completions.push({
+      pass,
+      completion: {
+        ...summarizeCompletion(payload),
+        attempts: completion.attempts,
+        durationMs: completion.durationMs,
       },
-      45_000,
-    );
-    if (!payload) return null;
+    });
     const content = messageContent(payload);
     if (!content) throw new Error('OpenRouter returned an empty response');
     lastDraft = content;
@@ -468,6 +604,7 @@ export async function askCoach(
       requestedDates = [...new Set(needs)];
       continue;
     }
+    options.timer?.start('validate');
     try {
       const recentConversationGrounding = history
         .slice(-2)
@@ -479,6 +616,8 @@ export async function askCoach(
         profile,
         `${coachContext.text}\n${recentConversationGrounding}`,
       );
+      telemetry.validationOutcome =
+        pass === 0 ? 'passed' : 'passed_after_retry';
       return {
         content: content.replace(
           /\[NEED:\s*workout\s+20\d{2}-\d{2}-\d{2}\]/gi,
@@ -486,27 +625,35 @@ export async function askCoach(
         ),
         model: payload.model ?? model,
         coachId,
+        telemetry,
       };
     } catch (error) {
       if (!(error instanceof EvidenceMismatchError)) throw error;
       validationFailure = error.message;
+      telemetry.validationFailureReasons.push(error.message);
       if (pass === 1) {
+        telemetry.validationOutcome = 'unverified';
         return {
           content: `${lastDraft}\n\n*Some figures in this answer could not be verified against your synchronized Hevy log.*`,
           model: payload.model ?? model,
           coachId,
+          telemetry,
         };
       }
       console.warn(
         'Retrying a coach response that failed evidence validation',
         { reason: error.message },
       );
+    } finally {
+      options.timer?.end('validate');
     }
   }
+  telemetry.validationOutcome = 'unverified';
   return {
     content: `${lastDraft}\n\n*Some figures in this answer could not be verified against your synchronized Hevy log.*`,
     model,
     coachId,
+    telemetry,
   };
 }
 
