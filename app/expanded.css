@@ -732,3 +732,568 @@ td small { color: #8a9286; font-size: 0.68rem; }
   .thinking i,
   .response-cursor { animation: none; }
 }
+
+/* Phone polish: safe areas, touch targets, and layouts that never spill sideways. */
+@media (max-width: 720px) {
+  html,
+  body,
+  .app-shell,
+  main,
+  .coach-main { max-width: 100%; }
+
+  .app-shell {
+    min-height: 100dvh;
+    padding-bottom: calc(74px + env(safe-area-inset-bottom));
+  }
+
+  .side-rail {
+    inset: auto 0 0;
+    width: 100%;
+    height: calc(64px + env(safe-area-inset-bottom));
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .side-rail nav {
+    min-width: 0;
+    gap: 2px;
+  }
+
+  .side-rail nav button {
+    min-width: 0;
+    min-height: 50px;
+    padding: 4px 2px;
+    overflow: hidden;
+    font-size: 0.58rem;
+    white-space: nowrap;
+  }
+
+  main,
+  .coach-main {
+    min-width: 0;
+    height: auto;
+    padding: max(20px, env(safe-area-inset-top)) 12px 20px;
+    overflow: visible;
+  }
+
+  .topbar {
+    min-width: 0;
+    margin-bottom: 20px;
+    gap: 12px;
+  }
+
+  .topbar > div,
+  .topbar-actions,
+  .sync-copy,
+  .sync-copy-button {
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+  }
+
+  .topbar h1 {
+    max-width: 100%;
+    font-size: clamp(2rem, 10.5vw, 2.65rem);
+    line-height: 0.98;
+    overflow-wrap: anywhere;
+  }
+
+  .topbar-actions {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .sync-copy,
+  .sync-copy-button {
+    justify-content: flex-start;
+    margin-top: 0;
+    padding: 8px 0;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+
+  .setup-banner {
+    min-width: 0;
+    gap: 14px;
+    padding: 15px;
+    overflow: hidden;
+    border-radius: 14px;
+  }
+
+  .setup-banner > div,
+  .setup-banner strong,
+  .setup-banner p,
+  .setup-banner code,
+  .setup-sync-button {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .setup-banner code,
+  .setup-sync-button {
+    display: flex;
+    width: 100%;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    white-space: normal;
+  }
+
+  .planner-panel,
+  .week-panel,
+  .trend-panel,
+  .history-panel,
+  .coach-panel,
+  .review-panel,
+  .workload-panel,
+  .pr-panel,
+  .muscle-panel,
+  .exercise-table-panel,
+  .audit-panel,
+  .calendar-panel,
+  .day-log-panel,
+  .profile-intro,
+  .profile-form,
+  .program-builder,
+  .program-document {
+    min-width: 0;
+    padding: 16px;
+    border-radius: 17px;
+  }
+
+  .panel-heading,
+  .panel-heading.compact,
+  .coach-heading {
+    min-width: 0;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .panel-heading > div,
+  .panel-title-row,
+  .panel-heading h2 {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .duration-group button,
+  .muscle-window-picker button,
+  .icon-button,
+  .add-exercise-button,
+  .coach-source-card > header button,
+  .pin-chat,
+  .delete-chat {
+    min-height: 44px;
+  }
+
+  .icon-button,
+  .coach-source-card > header button,
+  .pin-chat,
+  .delete-chat {
+    width: 44px;
+    height: 44px;
+  }
+
+  .planner-controls [data-slot='select-trigger'],
+  .program-builder input,
+  .program-builder select,
+  .program-builder textarea,
+  .profile-form input,
+  .profile-form select,
+  .profile-form textarea,
+  .program-adjustment textarea,
+  .program-editor input,
+  .program-editor select,
+  .program-editor textarea,
+  .slot-row input,
+  .coach-preferences select,
+  .chat-composer textarea {
+    min-height: 48px;
+    font-size: 16px;
+  }
+
+  .metrics-grid,
+  .command-grid,
+  .today-lower-grid,
+  .progress-grid,
+  .distribution-grid,
+  .audit-grid,
+  .profile-layout,
+  .program-layout {
+    min-width: 0;
+    gap: 12px;
+  }
+
+  .metric-card {
+    min-width: 0;
+    padding: 14px;
+  }
+
+  .metric-label-copy > span {
+    white-space: normal;
+  }
+
+  .program-builder form,
+  .profile-form {
+    gap: 14px;
+  }
+
+  .saved-programs {
+    margin-top: 22px;
+  }
+
+  .saved-programs button {
+    min-height: 48px;
+    overflow-wrap: anywhere;
+  }
+
+  .program-document {
+    min-height: 0;
+  }
+
+  .program-document > header,
+  .program-editor-header,
+  .profile-context-heading,
+  .slot-manager-heading {
+    min-width: 0;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .program-document > header > div,
+  .program-editor-header > div,
+  .program-document h2,
+  .program-document p {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .program-document-actions,
+  .program-action-buttons,
+  .routine-preview-actions,
+  .program-adjustment > div,
+  .program-editor-actions,
+  .form-actions {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .program-document-actions,
+  .program-action-buttons {
+    justify-items: stretch;
+  }
+
+  .program-action-buttons > button,
+  .routine-preview-actions > button,
+  .program-adjustment > div > button,
+  .program-editor-actions > button,
+  .form-actions > button,
+  .program-builder form > button {
+    width: 100%;
+    min-height: 46px;
+  }
+
+  .day-heading {
+    padding: 14px;
+  }
+
+  .day-heading > button {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .day-exercises > div {
+    min-width: 0;
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 6px 10px;
+    padding: 12px;
+  }
+
+  .day-exercises > div > div,
+  .day-exercises strong,
+  .day-exercises small {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .day-exercises b,
+  .day-exercises em {
+    grid-column: 2;
+  }
+
+  .next-session-list > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .next-session-list span {
+    text-align: left;
+  }
+
+  .editor-day-heading > div {
+    grid-template-columns: 46px minmax(0, 1fr);
+  }
+
+  .editor-exercise-topline {
+    grid-template-columns: 24px minmax(0, 1fr) 44px;
+  }
+
+  .add-exercise-button {
+    width: calc(100% - 28px);
+    justify-content: center;
+  }
+
+  .profile-context-note {
+    text-align: left;
+  }
+
+  .profile-context-stats {
+    flex-wrap: wrap;
+    gap: 14px 24px;
+  }
+
+  .block-row {
+    align-items: flex-start;
+  }
+
+  .table-scroll,
+  .table-scroll-scroll {
+    width: calc(100% + 32px);
+    margin-right: -16px;
+    margin-left: -16px;
+    padding: 0 16px 8px;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .exercise-table-panel table {
+    min-width: 680px;
+  }
+
+  .chat-workspace {
+    height: auto;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: 17px;
+  }
+
+  .chat-sidebar {
+    max-height: none;
+    padding: 12px;
+  }
+
+  .coach-preferences {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .coach-preferences > small {
+    grid-column: 1 / -1;
+  }
+
+  .chat-history-label {
+    margin-top: 14px;
+  }
+
+  .conversation-list {
+    display: flex;
+    max-height: none;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .conversation-row {
+    min-width: min(250px, 78vw);
+    flex: 0 0 auto;
+  }
+
+  .pin-chat,
+  .delete-chat {
+    opacity: 1;
+  }
+
+  .chat-stage {
+    height: min(70dvh, 640px);
+    min-height: 520px;
+  }
+
+  .chat-messages {
+    padding: 22px 14px;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .coach-welcome h2 {
+    font-size: clamp(1.7rem, 8vw, 2.25rem);
+  }
+
+  .message p,
+  .message-markdown {
+    font-size: 0.95rem;
+    line-height: 1.62;
+  }
+
+  .chat-composer {
+    width: calc(100% - 20px);
+    margin-bottom: 10px;
+    padding: 10px 56px 25px 13px;
+  }
+
+  .chat-composer > button {
+    width: 44px;
+    height: 44px;
+    top: 10px;
+    right: 10px;
+  }
+
+  .coach-source-drawer {
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border-left: 0;
+  }
+
+  .chat-workspace.source-open .chat-stage {
+    margin-right: 0;
+  }
+
+  .calendar-panel .rdp-root {
+    --rdp-day_button-width: 40px;
+    --rdp-day_button-height: 40px;
+    --rdp-nav_button-width: 44px;
+    --rdp-nav_button-height: 44px;
+  }
+
+  .calendar-panel .rdp-day {
+    height: 44px;
+  }
+
+  .calendar-empty {
+    min-height: 300px;
+  }
+
+  .logged-exercise,
+  .logged-workout,
+  .set-ledger > div {
+    min-width: 0;
+  }
+
+  footer {
+    align-items: flex-start;
+    gap: 6px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 430px) {
+  main,
+  .coach-main {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .side-rail {
+    padding-right: 5px;
+    padding-left: 5px;
+  }
+
+  .side-rail nav button {
+    font-size: 0.55rem;
+  }
+
+  .side-rail nav button svg {
+    width: 16px;
+  }
+
+  .planner-panel,
+  .week-panel,
+  .trend-panel,
+  .history-panel,
+  .coach-panel,
+  .review-panel,
+  .workload-panel,
+  .pr-panel,
+  .muscle-panel,
+  .exercise-table-panel,
+  .audit-panel,
+  .calendar-panel,
+  .day-log-panel,
+  .profile-intro,
+  .profile-form,
+  .program-builder,
+  .program-document {
+    padding: 14px;
+  }
+
+  .duration-group {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .duration-group button {
+    min-width: 0;
+  }
+
+  .editor-exercise-grid,
+  .height-inputs {
+    grid-template-columns: 1fr;
+  }
+
+  .set-ledger > div {
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 4px 8px;
+    padding: 8px;
+  }
+
+  .set-ledger small,
+  .set-ledger em {
+    grid-column: 2;
+  }
+
+  .set-ledger em {
+    width: fit-content;
+  }
+
+  .coach-preferences {
+    grid-template-columns: 1fr;
+  }
+
+  .coach-preferences > small {
+    grid-column: auto;
+  }
+
+  .chat-stage {
+    height: min(72dvh, 600px);
+    min-height: 500px;
+  }
+
+  .message {
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .message-avatar {
+    width: 28px;
+    height: 28px;
+  }
+
+  .routine-preview-card pre {
+    margin-right: -6px;
+    margin-left: -6px;
+  }
+}
