@@ -72,6 +72,7 @@ html {
 body {
   margin: 0;
   min-width: 320px;
+  overflow-x: hidden;
   background:
     radial-gradient(circle at 90% 0%, rgb(184 237 74 / 12%), transparent 30rem),
     var(--background);
