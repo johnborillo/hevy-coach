@@ -20,6 +20,20 @@ import { parseOpenRouterStream } from './openrouter-stream';
 
 export const COACH_TURN_BUDGET_MS = 75_000;
 
+// Leave room for one realistic rewrite; below this, keep the first draft.
+export const MIN_REWRITE_BUDGET_MS = 30_000;
+
+// AbortSignal.timeout() rejects with a DOMException named TimeoutError
+// ("The operation was aborted due to timeout"); some runtimes report AbortError.
+export function isTimeoutError(error: unknown) {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error.name === 'TimeoutError' || error.name === 'AbortError')
+  );
+}
+
 class CoachBudgetExceededError extends Error {
   constructor() {
     super('The AI model took too long to respond.');
@@ -944,6 +958,10 @@ export async function askCoach(
   }
   let servedModel = model;
   let notice: string | null = null;
+  let streamVisible = true;
+  const resetVisibleDraft = () => {
+    if (streamVisible) options.stream?.onReset?.();
+  };
   const requestPass = async (
     messages: OpenRouterMessage[],
     pass: number,
@@ -973,7 +991,9 @@ export async function askCoach(
             requestOptions.timeoutMs,
             (text) => {
               ttftMs ??= Math.max(0, Date.now() - startedAt);
-              options.stream?.onDelta(text);
+              // A validation rewrite runs hidden so the reader keeps the
+              // first draft on screen instead of watching it disappear.
+              if (streamVisible) options.stream?.onDelta(text);
             },
             options.budgetStartedAt === undefined
               ? undefined
@@ -998,7 +1018,7 @@ export async function askCoach(
         telemetry.fallbackReason = `No provider for ${coachModelLabel(requestModel)} meets the privacy setting.`;
         return null;
       }
-      if (error instanceof CoachBudgetExceededError) {
+      if (error instanceof CoachBudgetExceededError || isTimeoutError(error)) {
         telemetry.fallbackReason = 'The AI model took too long to respond.';
         return null;
       }
@@ -1053,6 +1073,23 @@ export async function askCoach(
       telemetry,
     };
   };
+  const issueScore = (item: DraftCandidate) => [
+    item.issues.filter((issue) => issue.severity === 'hard').length,
+    item.issues.filter((issue) => issue.severity === 'soft').length,
+  ];
+  // Fewest hard issues, then fewest soft issues, then the earlier draft
+  // (the one the reader already saw).
+  const finalizeBest = () => {
+    const best = candidates.reduce<DraftCandidate | null>((current, item) => {
+      if (!current) return item;
+      const [currentHard, currentSoft] = issueScore(current);
+      const [itemHard, itemSoft] = issueScore(item);
+      if (itemHard !== currentHard) return itemHard < currentHard ? item : current;
+      if (itemSoft !== currentSoft) return itemSoft < currentSoft ? item : current;
+      return item.pass < current.pass ? item : current;
+    }, null);
+    return best ? finalize(best) : null;
+  };
   for (let pass = 0; pass < 2; pass += 1) {
     telemetry.passes = Math.max(telemetry.passes, pass + 1);
     const coachContext = buildCoachContext(profile, dashboard, history, {
@@ -1068,7 +1105,7 @@ export async function askCoach(
       ...historyMessages,
     ];
     const messages =
-      pass === 0
+      pass === 0 || !validationFailure
         ? baseMessages
         : [
             ...baseMessages.slice(0, 2),
@@ -1079,46 +1116,28 @@ export async function askCoach(
             ...historyMessages,
           ];
     let completion = await requestPass(messages, pass, model, 'primary');
-    if (!completion) {
-      const best = candidates.reduce<DraftCandidate | null>(
-        (current, item) => {
-          if (!current) return item;
-          const currentScore = [
-            current.issues.filter((issue) => issue.severity === 'hard').length,
-            current.issues.filter((issue) => issue.severity === 'soft').length,
-          ];
-          const itemScore = [
-            item.issues.filter((issue) => issue.severity === 'hard').length,
-            item.issues.filter((issue) => issue.severity === 'soft').length,
-          ];
-          return itemScore[0] < currentScore[0] ||
-            (itemScore[0] === currentScore[0] &&
-              (itemScore[1] < currentScore[1] ||
-                (itemScore[1] === currentScore[1] && item.pass < current.pass)))
-            ? item
-            : current;
-        },
-        null,
-      );
-      return best ? finalize(best) : null;
-    }
+    if (!completion) return finalizeBest();
     let payload = completion.payload;
     let content = messageContent(payload);
-    if (!content) throw new Error('OpenRouter returned an empty response');
+    if (!content) {
+      // An empty rewrite should not discard a usable first draft.
+      if (candidates.length) return finalizeBest();
+      throw new Error('OpenRouter returned an empty response');
+    }
     let refusalReason = detectRefusal(payload, content);
     if (refusalReason) {
       telemetry.refusalDetected = true;
       telemetry.refusalReason ??= refusalReason;
       telemetry.refusalRetries += 1;
       options.stream?.onStatus?.('retrying_model');
-      options.stream?.onReset?.();
+      resetVisibleDraft();
       completion = await requestPass(
         messages,
         pass,
         model,
         'refusal_same_model',
       );
-      if (!completion) return null;
+      if (!completion) return finalizeBest();
       payload = completion.payload;
       content = messageContent(payload);
       refusalReason = detectRefusal(payload, content);
@@ -1126,18 +1145,19 @@ export async function askCoach(
         telemetry.refusalRetries += 1;
         const fallbackModel = refusalFallbackModel(model);
         options.stream?.onStatus?.('retrying_model');
-        options.stream?.onReset?.();
+        resetVisibleDraft();
         completion = await requestPass(
           messages,
           pass,
           fallbackModel,
           'refusal_fallback_model',
         );
-        if (!completion) return null;
+        if (!completion) return finalizeBest();
         payload = completion.payload;
         content = messageContent(payload);
         refusalReason = detectRefusal(payload, content);
         if (refusalReason) {
+          if (candidates.length) return finalizeBest();
           telemetry.fallbackReason =
             'The AI model declined to answer this question.';
           return null;
@@ -1153,7 +1173,7 @@ export async function askCoach(
     if (needs.length && pass === 0) {
       requestedDates = [...new Set(needs)];
       options.stream?.onStatus?.('retrieving_workouts');
-      options.stream?.onReset?.();
+      resetVisibleDraft();
       continue;
     }
     options.timer?.start('validate');
@@ -1185,11 +1205,19 @@ export async function askCoach(
     candidates.push(candidate);
     if (!issues.length && pass === 0) return finalize(candidate);
     if (issues.length) {
-      validationFailure = issues[0]?.message ?? 'unsupported evidence';
       telemetry.validationFailureReasons.push(
         ...issues.map((item) => item.message),
       );
-      if (pass === 0) {
+      const hardIssue = issues.find((item) => item.severity === 'hard');
+      const remainingMs =
+        options.budgetStartedAt === undefined
+          ? Number.POSITIVE_INFINITY
+          : options.budgetStartedAt + COACH_TURN_BUDGET_MS - Date.now();
+      // Soft issues (an unmatched number) are flagged on the draft rather
+      // than worth a full rewrite, and a rewrite that cannot finish in the
+      // remaining budget would only end in a timeout.
+      if (pass === 0 && hardIssue && remainingMs >= MIN_REWRITE_BUDGET_MS) {
+        validationFailure = hardIssue.message;
         console.warn(
           'Retrying a coach response that failed evidence validation',
           {
@@ -1197,29 +1225,13 @@ export async function askCoach(
           },
         );
         options.stream?.onStatus?.('double_checking');
-        options.stream?.onReset?.();
+        streamVisible = false;
         continue;
       }
     }
-    if (pass === 1) {
-      const score = (item: DraftCandidate) => [
-        item.issues.filter((issue) => issue.severity === 'hard').length,
-        item.issues.filter((issue) => issue.severity === 'soft').length,
-      ];
-      const better = candidates.reduce((best, item) => {
-        const bestScore = score(best);
-        const itemScore = score(item);
-        if (itemScore[0] < bestScore[0]) return item;
-        if (itemScore[0] > bestScore[0]) return best;
-        if (itemScore[1] < bestScore[1]) return item;
-        if (itemScore[1] > bestScore[1]) return best;
-        return item.pass < best.pass ? item : best;
-      });
-      return finalize(better);
-    }
+    return finalizeBest();
   }
-  const lastCandidate = candidates.at(-1);
-  return lastCandidate ? finalize(lastCandidate) : null;
+  return finalizeBest();
 }
 
 export async function generateProgramWithCoach(

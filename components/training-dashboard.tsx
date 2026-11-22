@@ -158,6 +158,9 @@ const EMPTY_PROFILE: AthleteProfile = {
   timezone: 'UTC',
 };
 
+const DOUBLE_CHECKING_STATUS =
+  'Double-checking against your log — this draft may be revised…';
+
 const STARTERS = [
   'Build me a 40-minute upper session based on this week.',
   'Why might my main lifts be plateauing?',
@@ -1213,7 +1216,7 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                 data.state === 'retrieving_workouts'
                   ? 'Pulling that workout…'
                   : data.state === 'double_checking'
-                    ? 'Double-checking against your log…'
+                    ? DOUBLE_CHECKING_STATUS
                     : 'Trying another model…',
               );
             } else if (event === 'done' && data.assistantMessage) {
@@ -2767,7 +2770,14 @@ export function TrainingDashboard({ data }: { data: DashboardData }) {
                   </div>
                 )}
                 {chatBusy && streamingDraft && (
-                  <article className="message assistant">
+                  <article
+                    className={
+                      streamingStatus === DOUBLE_CHECKING_STATUS
+                        ? 'message assistant draft-checking'
+                        : 'message assistant'
+                    }
+                    aria-busy={streamingStatus === DOUBLE_CHECKING_STATUS}
+                  >
                     <div className="message-avatar">{selectedCoach.initials}</div>
                     <div>
                       <div className="message-meta">
