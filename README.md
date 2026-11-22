@@ -35,8 +35,8 @@ OPENROUTER_MODEL_PROGRAM=
 OPENROUTER_MODEL_REVIEW=
 ```
 
-The chat picker supports GLM 5.3 Flash, GPT-6 Luna, DeepSeek V4.1 Flash, and
-DeepSeek V4 Flash (0731). All OpenRouter requests require the provider privacy
+The chat picker supports GLM 5.3 Flash, GPT-6 Luna, DeepSeek V4.1 Flash,
+DeepSeek V4.1 Flash (1017), and DeepSeek V4 Flash (0731). All OpenRouter requests require the provider privacy
 policy `data_collection: deny`.
 
 Secrets are read only by server routes. `HEVY_ROUTINE_CONFIRM_SECRET` signs short-lived routine preview confirmations; if omitted, the Hevy API key is used as the signing secret. Never commit `.env.local` or place keys in browser code.

@@ -12,6 +12,10 @@ export const COACH_MODELS = [
     label: 'DeepSeek V4.1 Flash',
   },
   {
+    id: 'deepseek/deepseek-v4.1-flash-1017',
+    label: 'DeepSeek V4.1 Flash (1017)',
+  },
+  {
     id: 'deepseek/deepseek-v4-flash-0731',
     label: 'DeepSeek V4 Flash (0731)',
   },

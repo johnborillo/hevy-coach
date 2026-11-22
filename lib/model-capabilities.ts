@@ -26,6 +26,7 @@ const CAPABILITIES: Record<string, ModelCapabilities> = {
   'z-ai/glm-5.3-flash': DEFAULT_CAPABILITIES,
   'openai/gpt-6-luna': DEFAULT_CAPABILITIES,
   'deepseek/deepseek-v4.1-flash': DEFAULT_CAPABILITIES,
+  'deepseek/deepseek-v4.1-flash-1017': DEFAULT_CAPABILITIES,
   'deepseek/deepseek-v4-flash-0731': DEFAULT_CAPABILITIES,
 };
 

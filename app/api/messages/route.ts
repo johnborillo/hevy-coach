@@ -185,7 +185,12 @@ async function streamPost(request: Request) {
                 budgetStartedAt: turnStartedAt,
                 stream: {
                   onDelta: pushDelta,
-                  onStatus: (state) => sseEvent(controller, encoder, 'status', { state }),
+                  onStatus: (state) => {
+                    // The first draft stays on screen during the hidden
+                    // double-check, so release its held tail now.
+                    if (state === 'double_checking') flushDelta();
+                    sseEvent(controller, encoder, 'status', { state });
+                  },
                   onReset: () => {
                     heldDelta = '';
                     sseEvent(controller, encoder, 'reset', {});

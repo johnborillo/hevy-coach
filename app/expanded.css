@@ -725,10 +725,18 @@ td small { color: #8a9286; font-size: 0.68rem; }
   .set-ledger em { grid-column: 2 / -1; width: max-content; }
 }
 
+/* The first draft stays readable, but visibly provisional, while the coach
+   double-checks it against the log in the background. */
+.message.assistant.draft-checking > div > :not(.message-meta) {
+  opacity: 0.62;
+  transition: opacity 240ms ease;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chat-stage,
   .coach-source-drawer,
-  .info-tooltip-popup { transition: none; }
+  .info-tooltip-popup,
+  .message.assistant.draft-checking > div > :not(.message-meta) { transition: none; }
   .thinking i,
   .response-cursor { animation: none; }
 }
