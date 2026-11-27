@@ -1,11 +1,14 @@
-import { getDashboardData } from '@/lib/hevy';
+import { getDashboardData, type DashboardData } from '@/lib/hevy';
 import { askCoach } from '@/lib/openrouter';
 import { requestUserId } from '@/lib/request-user';
 import {
   getProfile,
+  listPrograms,
   listConversations,
   listMessages,
   saveMessage,
+  type AthleteProfile,
+  type TrainingProgram,
 } from '@/lib/storage';
 import {
   DEFAULT_COACH_ID,
@@ -20,8 +23,78 @@ import {
 } from '@/lib/openrouter';
 import { TurnTimer } from '@/lib/coach-telemetry';
 import { searchStoredNotes } from '@/lib/notes-repo';
+import { freshenForRecentQuestion } from '@/lib/coach-freshness';
+import { nextProgramDayIndex, plannedSession } from '@/lib/coach-insights';
+import { resolveNextSession } from '@/lib/program-next';
+import { coachClock } from '@/lib/coach-clock';
+import { buildTurnMetric } from '@/lib/coach-metrics';
+import {
+  coachMetricsEnabled,
+  recordCoachTurnMetric,
+} from '@/lib/coach-metrics-repo';
 
 export const dynamic = 'force-dynamic';
+
+// Dev-only token accounting (COACH_METRICS=1). Awaited after the reply is
+// saved and sent; recordCoachTurnMetric never throws.
+async function recordTurnMetrics(input: {
+  userId: string;
+  conversationId: string;
+  messageId: string | null;
+  question: string;
+  profile: AthleteProfile;
+  requestedModel: string;
+  servedModel: string | null;
+  telemetry: CoachAskTelemetry;
+  turnStartedAt: number;
+}) {
+  if (!coachMetricsEnabled()) return;
+  const now = new Date();
+  await recordCoachTurnMetric(
+    buildTurnMetric({
+      id: crypto.randomUUID(),
+      userId: input.userId,
+      conversationId: input.conversationId,
+      messageId: input.messageId,
+      createdAt: now.toISOString(),
+      question: input.question,
+      today: coachClock(now, input.profile.timezone).today,
+      requestedModel: input.requestedModel,
+      servedModel: input.servedModel,
+      telemetry: input.telemetry,
+      totalMs: now.getTime() - input.turnStartedAt,
+    }),
+  );
+}
+
+function latestProgram(userId: string) {
+  return listPrograms(userId)
+    .then((items) => items[0] ?? null)
+    .catch(() => null);
+}
+
+// The program day after the latest matching workout, with resolved loads,
+// so "what should I do today?" gets a concrete answer.
+function plannedNextSession(
+  program: TrainingProgram | null,
+  dashboard: DashboardData,
+  profile: AthleteProfile,
+) {
+  if (!program) return null;
+  try {
+    return plannedSession(
+      program,
+      resolveNextSession(
+        program,
+        dashboard,
+        profile,
+        nextProgramDayIndex(program, dashboard.calendarWorkouts),
+      ),
+    );
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(request: Request) {
   const conversationId = new URL(request.url).searchParams.get(
@@ -120,13 +193,17 @@ async function streamPost(request: Request) {
   const userId = requestUserId(request.headers);
   try {
     timer.start('loadData');
+    // "How was my workout today?" must see a session logged minutes ago.
+    await freshenForRecentQuestion(userId, content);
     timer.start('notes');
-    const [conversations, profile, dashboard, noteResults] = await Promise.all([
+    const [conversations, profile, dashboard, noteResults, program] = await Promise.all([
       listConversations(userId),
       getProfile(userId),
       getDashboardData(userId),
       searchStoredNotes(userId, content),
+      latestProgram(userId),
     ]);
+    const nextSession = plannedNextSession(program, dashboard, profile);
     timer.end('notes');
     timer.end('loadData');
     if (!conversations.some((item) => item.id === conversationId))
@@ -197,7 +274,7 @@ async function streamPost(request: Request) {
                   },
                 },
               },
-              { noteResults },
+              { noteResults, nextSession },
             )) ?? {
               content: fallbackAnswer(content, dashboard),
               model: 'evidence-engine',
@@ -224,6 +301,17 @@ async function streamPost(request: Request) {
             );
             timer.end('saveAssistant');
             sseEvent(controller, encoder, 'done', { assistantMessage });
+            await recordTurnMetrics({
+              userId,
+              conversationId,
+              messageId: assistantMessage.id,
+              question: content,
+              profile,
+              requestedModel,
+              servedModel: answer.model,
+              telemetry: askTelemetry,
+              turnStartedAt,
+            });
           } catch (error) {
             sseEvent(controller, encoder, 'error', {
               error:
@@ -319,18 +407,21 @@ export async function POST(request: Request) {
       : DEFAULT_COACH_MODEL;
     const userId = requestUserId(request.headers);
     timer.start('loadData');
+    await freshenForRecentQuestion(userId, content);
     timer.start('notes');
     const authorizationPromise = listConversations(userId);
     const profilePromise = getProfile(userId);
     const dashboardPromise = getDashboardData(userId);
     const notesPromise = searchStoredNotes(userId, content);
     timer.start('authz');
-    const [conversations, profile, dashboard, noteResults] = await Promise.all([
+    const [conversations, profile, dashboard, noteResults, program] = await Promise.all([
       authorizationPromise,
       profilePromise,
       dashboardPromise,
       notesPromise,
+      latestProgram(userId),
     ]);
+    const nextSession = plannedNextSession(program, dashboard, profile);
     timer.end('authz');
     timer.end('notes');
     timer.end('loadData');
@@ -368,6 +459,7 @@ export async function POST(request: Request) {
         budgetStartedAt: turnStartedAt,
       }, {
         noteResults,
+        nextSession,
       })) ?? {
         content: fallbackAnswer(content, dashboard),
         model: 'evidence-engine',
@@ -423,6 +515,17 @@ export async function POST(request: Request) {
     const response = Response.json({ userMessage, assistantMessage });
     response.headers.set('Server-Timing', timer.serverTiming());
     logTurn();
+    await recordTurnMetrics({
+      userId,
+      conversationId,
+      messageId: assistantMessage?.id ?? null,
+      question: content,
+      profile,
+      requestedModel,
+      servedModel,
+      telemetry: askTelemetry,
+      turnStartedAt,
+    });
     return response;
   } catch {
     const response = Response.json(

@@ -16,6 +16,8 @@ import {
 import type { TurnTimer } from './coach-telemetry';
 import type { searchStoredNotes } from './notes-repo';
 import { chatRequestOptions, programRequestOptions } from './model-capabilities';
+import type { plannedSession } from './coach-insights';
+import { estimatePrompt, type PromptEstimate } from './coach-metrics';
 import { parseOpenRouterStream } from './openrouter-stream';
 
 export const COACH_TURN_BUDGET_MS = 75_000;
@@ -68,7 +70,20 @@ Rules:
 - Prefer concise action plans with loads, reps, RIR/RPE, rest, and progression criteria when useful.
 - Treat estimated 1RM as a trend signal, not a true max.
 - Do not diagnose pain or medical conditions. Recommend qualified care for persistent or concerning symptoms.
-- Never claim a workout or routine was written to Hevy. Drafts require athlete approval.`;
+- Never claim a workout or routine was written to Hevy. Drafts require athlete approval.
+
+Dates and time:
+- clock.today, clock.weekday and clock.localTime are the athlete's current local date and time. Resolve "today", "tonight", "yesterday", weekday names, "this week" and "last week" against clock.today, never against the newest workout.
+- clock.datesReferencedInQuestion lists the dates the athlete's wording points to and which workouts were logged on each. Each workout in verifiedHevyWorkoutLog also carries its weekday and relativeDay.
+- If the athlete asks about a day with no logged workout, say so plainly (for example "I don't see a workout logged today yet"), mention when Hevy was last synced if clock.lastHevySyncAt is available, and then offer the most recent workout with its relative day and date. Never silently substitute another day or announce that you are assuming one.
+- Use relative phrasing naturally ("yesterday's push session", "three days ago") and account for elapsed time when it matters: days since the last session, time of day for same-day advice, and how far into the week the athlete is.
+
+Session reviews and planning:
+- When the athlete asks how a session went, use sessionComparisons: compare each exercise's top set and working sets with its previous occurrence, call out personalRecords from that session, and compare totals with previousSameNamedWorkout when present. Lead with the two or three changes that matter most rather than listing every exercise, and treat small load or rep swings as normal variation.
+- trainingStatus.muscleRecency gives days since each muscle group was last trained directly and its working sets in the last seven days. Use it for readiness and "should I train X today?" questions, together with any pain or recovery notes.
+- trainingStatus.thisWeek shows sessions done against the athlete's target and the days left. Use it to judge whether the week is on track, without guilt-tripping a missed day.
+- trainingStatus.nextPlannedSession is the next day of the athlete's saved program with resolved loads. Use it for "what should I do today?" and adjust it for recovery, time, or notes when needed. If it is null, there is no saved program; suggest a session from recent history instead.
+- trainingStatus.trainingBlock gives the current block, week number, and days remaining. Frame advice for the block's kind (for example, keep a deload light) and flag when the block ends within a week.`;
 
 type OpenRouterMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -148,6 +163,8 @@ export type CoachAskTelemetry = {
   refusalReason: string | null;
   refusalRetries: number;
   fallbackReason?: string;
+  /** Estimated per-section size of the first pass's prompt (dev metrics). */
+  promptEstimate?: PromptEstimate;
 };
 
 export function createCoachAskTelemetry(): CoachAskTelemetry {
@@ -639,6 +656,16 @@ export function collectEvidenceIssues(
   const knownDates = new Set(
     dashboard.calendarWorkouts.map((workout) => workout.date),
   );
+  // Today and the dates the question pointed at may be named when the coach
+  // says nothing was logged there ("I don't see a workout on 2026-11-26").
+  const clockDates = new Set(
+    [
+      ...evidenceText.matchAll(
+        /"(?:today|date)":"(20\d{2}-\d{2}-\d{2})"/g,
+      ),
+    ].map((match) => match[1]),
+  );
+  const negatedSentence = /\b(?:no|not|nothing|none|haven't|hasn't|isn't|don't|didn't|can't|without|yet to)\b|n't\b/i;
   const knownExerciseText = dashboard.calendarWorkouts
     .flatMap((workout) =>
       workout.exercises.map((exercise) => exercise.title.toLowerCase()),
@@ -697,7 +724,12 @@ export function collectEvidenceIssues(
     ].map((match) => match[1]);
     const unsupportedDates = [...new Set(historicalDateMatches)]
       .map(normalizeDate)
-      .filter((date): date is string => date !== null && !knownDates.has(date));
+      .filter(
+        (date): date is string =>
+          date !== null &&
+          !knownDates.has(date) &&
+          !(clockDates.has(date) && negatedSentence.test(sentence)),
+      );
     if (unsupportedDates.length) {
       issues.push(
         issue(
@@ -901,6 +933,7 @@ export async function askCoach(
     searchNotes?: typeof searchStoredNotes;
     noteResults?: Awaited<ReturnType<typeof searchStoredNotes>>;
     now?: () => Date;
+    nextSession?: ReturnType<typeof plannedSession>;
   } = {},
 ) {
   const coachId = options.coachId ?? DEFAULT_COACH_ID;
@@ -1093,6 +1126,8 @@ export async function askCoach(
   for (let pass = 0; pass < 2; pass += 1) {
     telemetry.passes = Math.max(telemetry.passes, pass + 1);
     const coachContext = buildCoachContext(profile, dashboard, history, {
+      now: deps.now?.(),
+      nextSession: deps.nextSession ?? null,
       additionalDates: requestedDates,
       noteResults,
     });
@@ -1115,6 +1150,14 @@ export async function askCoach(
             },
             ...historyMessages,
           ];
+    if (pass === 0) {
+      telemetry.promptEstimate ??= estimatePrompt({
+        systemPrompt: COACH_PERSONA,
+        contextMessage: baseMessages[1].content,
+        contextJson: coachContext.text,
+        history: historyMessages,
+      });
+    }
     let completion = await requestPass(messages, pass, model, 'primary');
     if (!completion) return finalizeBest();
     let payload = completion.payload;

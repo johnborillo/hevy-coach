@@ -2,6 +2,22 @@ import type { DashboardData } from './hevy';
 import type { AthleteProfile, ChatMessage } from './storage';
 import { buildAthleteContext } from './context';
 import type { NoteSearchResult } from './notes-repo';
+import {
+  blockProgress,
+  compareSession,
+  comparisonWorkoutIds,
+  muscleRecency,
+  weekProgress,
+  type plannedSession,
+} from './coach-insights';
+import {
+  asksAboutRecentTraining,
+  coachClock,
+  daysBetween,
+  relativeDayLabel,
+  resolveRelativeDates,
+  weekdayOf,
+} from './coach-clock';
 
 export const SUMMARY_FIELDS = [
   'findings',
@@ -17,6 +33,9 @@ export const SUMMARY_FIELDS = [
 export type CoachContextOptions = {
   additionalDates?: string[];
   noteResults?: NoteSearchResult[];
+  now?: Date;
+  /** The athlete's next planned program session, when a program exists. */
+  nextSession?: ReturnType<typeof plannedSession>;
 };
 
 export type CoachContext = {
@@ -28,10 +47,13 @@ export type CoachContext = {
 function compactWorkout(
   workout: DashboardData['calendarWorkouts'][number],
   profile: AthleteProfile,
+  today: string,
 ) {
   return {
     id: workout.id,
     date: workout.date,
+    weekday: weekdayOf(workout.date),
+    relativeDay: relativeDayLabel(workout.date, today),
     title: workout.title,
     description: workout.description ?? null,
     time: workout.time,
@@ -102,6 +124,9 @@ export function buildCoachContext(
   options: CoachContextOptions = {},
 ): CoachContext {
   const question = lastQuestion(history).toLowerCase();
+  const now = options.now ?? new Date();
+  const clock = coachClock(now, profile.timezone);
+  const relativeDates = resolveRelativeDates(question, clock.today);
   const athleteContext = buildAthleteContext(
     profile,
     dashboard.bodyWeightTrend ?? null,
@@ -109,6 +134,7 @@ export function buildCoachContext(
   );
   const requestedDates = [
     ...datesInQuestion(question),
+    ...relativeDates,
     ...(options.additionalDates ?? []),
   ];
   const referenced = dashboard.calendarWorkouts.filter((workout) =>
@@ -117,9 +143,28 @@ export function buildCoachContext(
       mentionsExercise(question, exercise.title),
     ),
   );
+  // Workouts the athlete is asking about directly ("how was today?"), or
+  // the latest one for "my last session"; these get a like-for-like
+  // comparison with earlier sessions.
+  const datedFocus = dashboard.calendarWorkouts.filter((workout) =>
+    requestedDates.includes(workout.date),
+  );
+  const focusWorkouts = (
+    datedFocus.length
+      ? datedFocus
+      : asksAboutRecentTraining(question)
+        ? dashboard.calendarWorkouts.slice(0, 1)
+        : []
+  ).slice(0, 2);
+  const sessionComparisons = focusWorkouts.map((workout) =>
+    compareSession(workout, dashboard.calendarWorkouts, dashboard.records ?? [], profile),
+  );
+  const comparedIds = new Set(sessionComparisons.flatMap(comparisonWorkoutIds));
   const selected = [
     ...dashboard.calendarWorkouts.slice(0, 3),
+    ...focusWorkouts,
     ...referenced,
+    ...dashboard.calendarWorkouts.filter((workout) => comparedIds.has(workout.id)),
     ...(options.noteResults ?? []).flatMap((note) =>
       dashboard.calendarWorkouts.filter((workout) => workout.id === note.workoutId),
     ),
@@ -153,6 +198,7 @@ export function buildCoachContext(
         })),
       }
     : dashboard.weeklyReview;
+  const newestDate = dashboard.calendarWorkouts[0]?.date ?? null;
   const contextObject = {
     athlete: {
       phase: profile.phase,
@@ -210,7 +256,7 @@ export function buildCoachContext(
     progression: dashboard.progressionStates
       .filter((state) => {
         const time = new Date(state.lastPerformedAt).getTime();
-        return !Number.isFinite(time) || Date.now() - time <= 28 * 86_400_000;
+        return !Number.isFinite(time) || now.getTime() - time <= 28 * 86_400_000;
       })
       .map((state) => ({
         title: state.title,
@@ -232,11 +278,44 @@ export function buildCoachContext(
     workoutCoverage: {
       totalVerified: dashboard.calendarWorkouts.length,
       oldestDate: dashboard.calendarWorkouts.at(-1)?.date ?? null,
-      newestDate: dashboard.calendarWorkouts[0]?.date ?? null,
+      newestDate,
     },
     retrievalNote:
       'Only the verifiedHevyWorkoutLog and retrievedNotes above may support exact workout or note claims. Quote notes verbatim when useful. If another exact workout is needed, request it with [NEED: workout YYYY-MM-DD].',
-    verifiedHevyWorkoutLog: selected.map((workout) => compactWorkout(workout, profile)),
+    // Changes every turn, so it sits after the cache-stable prefix.
+    clock: {
+      today: clock.today,
+      weekday: clock.weekday,
+      localTime: clock.localTime,
+      timeZone: clock.timeZone,
+      lastHevySyncAt: dashboard.lastSyncAt ?? null,
+      workoutLoggedToday: newestDate === clock.today,
+      mostRecentWorkoutDate: newestDate,
+      daysSinceMostRecentWorkout:
+        newestDate == null ? null : daysBetween(newestDate, clock.today),
+      datesReferencedInQuestion: relativeDates.map((date) => ({
+        date,
+        weekday: weekdayOf(date),
+        relativeDay: relativeDayLabel(date, clock.today),
+        workoutsLogged: dashboard.calendarWorkouts
+          .filter((workout) => workout.date === date)
+          .map((workout) => workout.id),
+      })),
+    },
+    trainingStatus: {
+      thisWeek: weekProgress(
+        dashboard.calendarWorkouts,
+        clock.today,
+        profile.daysPerWeek,
+      ),
+      trainingBlock: blockProgress(dashboard.activeTrainingBlock, clock.today),
+      nextPlannedSession: options.nextSession ?? null,
+      muscleRecency: muscleRecency(dashboard.calendarWorkouts, clock.today),
+    },
+    sessionComparisons,
+    verifiedHevyWorkoutLog: selected.map((workout) =>
+      compactWorkout(workout, profile, clock.today),
+    ),
     retrievedNotes: (options.noteResults ?? []).map((note) => ({
       workoutId: note.workoutId,
       workoutDate: note.workoutDate,

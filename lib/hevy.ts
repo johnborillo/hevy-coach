@@ -100,6 +100,8 @@ export type DashboardData = {
   connected: boolean;
   sourceLabel: string;
   syncMessage: string;
+  /** When Hevy was last checked for new or changed workouts. */
+  lastSyncAt?: string | null;
   bodyWeightTrend?: {
     average7d: number | null;
     slopeKgPerWeek: number | null;
@@ -1497,6 +1499,7 @@ export async function getDashboardData(
         reviewHistory,
         sourceLabel: 'Synchronized Hevy history',
         syncMessage: `Analyzed ${snapshot.analysis.coverage.workoutCount} workouts${progress}`,
+        lastSyncAt: syncState?.lastSyncAt ?? null,
       };
     }
 
