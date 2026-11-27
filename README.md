@@ -76,6 +76,17 @@ Use `--dry-run` to exercise the harness with mocked completions. Before relying
 on the DeepSeek entries in production, verify their current OpenRouter
 `supported_parameters` for reasoning and JSON response-format support.
 
+### Coach token metrics (dev only)
+
+Set `COACH_METRICS=1` to record one row per coach turn in the
+`coach_turn_metrics` table: OpenRouter's prompt, cached, completion and
+reasoning tokens and cost for every request in the turn, an estimated
+breakdown of the prompt by section (system prompt, each training-context
+section, conversation history), the question kind, model, and latency. No
+message or answer text is stored. View it at `/dev/coach-metrics`, or fetch
+`/api/dev/coach-metrics?days=30` (add `&format=csv` or `&format=raw`). Both
+are scoped to the signed-in user and return nothing while the flag is off.
+
 Hevy workouts are stored twice: a raw JSON snapshot for faithful re-analysis and
 normalized workout, set, and template rows for fast bounded queries. The typed
 repository in `lib/hevy-repo.ts` owns writes to those tables. Dashboard reads stay

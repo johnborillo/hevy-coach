@@ -303,3 +303,37 @@ export const trainingBlocks = sqliteTable(
     index('idx_training_blocks_user_start').on(table.userId, table.startsAt),
   ],
 );
+
+// Dev-only token accounting per coach turn (COACH_METRICS=1). Stores sizes,
+// models, timings and token counts, never message or answer text.
+export const coachTurnMetrics = sqliteTable(
+  'coach_turn_metrics',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    conversationId: text('conversation_id').notNull(),
+    messageId: text('message_id'),
+    createdAt: text('created_at').notNull(),
+    feature: text('feature').notNull(),
+    questionKind: text('question_kind').notNull(),
+    requestedModel: text('requested_model').notNull(),
+    servedModel: text('served_model'),
+    outcome: text('outcome').notNull(),
+    passes: integer('passes').notNull(),
+    requests: integer('requests').notNull(),
+    historyMessages: integer('history_messages').notNull(),
+    estimatedPromptTokens: integer('estimated_prompt_tokens'),
+    promptTokens: integer('prompt_tokens'),
+    firstPassPromptTokens: integer('first_pass_prompt_tokens'),
+    cachedTokens: integer('cached_tokens'),
+    completionTokens: integer('completion_tokens'),
+    reasoningTokens: integer('reasoning_tokens'),
+    cost: real('cost'),
+    totalMs: integer('total_ms'),
+    sectionsJson: text('sections_json').notNull(),
+    completionsJson: text('completions_json').notNull(),
+  },
+  (table) => [
+    index('idx_coach_turn_metrics_user_created').on(table.userId, table.createdAt),
+  ],
+);
